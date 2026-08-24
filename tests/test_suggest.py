@@ -234,6 +234,15 @@ class TheWindowItself(unittest.TestCase):
     def test_it_says_what_enter_will_do_rather_than_guessing(self):
         self.assertIn("keeps <b>${esc(q)}</b> as typed", self.html)
 
+    def test_a_clicked_chip_is_not_mistaken_for_someone_typing(self):
+        # A chip carries data-field and becomes the focused element when clicked,
+        # so the guard that skips redrawing while typing must look at the tag.
+        self.assertIn("el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'", self.html)
+        self.assertNotIn("focused.dataset.field", self.html)
+
+    def test_a_chip_shows_its_new_state_before_the_save_comes_back(self):
+        self.assertIn("o.classList.toggle('on', o.dataset.val === want)", self.html)
+
     def test_motion_can_be_turned_off(self):
         self.assertIn("prefers-reduced-motion", self.html)
 

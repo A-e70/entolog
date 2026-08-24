@@ -230,6 +230,8 @@ textarea{resize:vertical;min-height:66px;line-height:1.5}
   transition:.16s var(--ease)
 }
 .opt:hover{color:var(--text);border-color:rgba(91,157,255,.45);background:rgba(91,157,255,.10)}
+.opt:active{transform:scale(.96)}
+.chip:active,.btn:active{transform:scale(.97)}
 .opt.on{
   color:var(--accent-ink);font-weight:600;border-color:transparent;
   background:linear-gradient(180deg,var(--accent),#3f7fe0);
@@ -656,7 +658,13 @@ function wireSide(){
   const owner = {id: p.id, occ: S.occ};
   const stillOurs = () => cur() && cur().id === owner.id && S.occ === owner.occ;
   $('#grp').onchange = e => S.group = e.target.checked;
-  $('#flagBtn').onclick = () => save({_flag: rec(p).flagged ? '' : '1'}, false);
+  $('#flagBtn').onclick = e => {
+    // A flag is about this photograph, not about the specimen, so it never
+    // spreads across the event. The terminal has always treated it that way.
+    const on = !rec(p).flagged;
+    e.currentTarget.textContent = on ? 'unflag' : 'flag';
+    save({_flag: on ? '1' : ''}, false, {photoOnly: true});
+  };
   $('#addRec').onclick = async () => {
     // No reload: the list is filtered, and this photograph might not be in it
     // any more, which would move the selection out from under the recorder.
@@ -677,7 +685,12 @@ function wireSide(){
   $('#prec').onchange = e => save({_precision: e.target.value});
   document.querySelectorAll('#side .opt').forEach(b => b.onclick = () => {
     const f = b.dataset.field;
-    save({[f]: b.dataset.val === val(p, f) ? '' : b.dataset.val});
+    const want = b.dataset.val === val(p, f) ? '' : b.dataset.val;
+    // Show it immediately. The write follows, and the form is redrawn from the
+    // record afterwards, so a refusal still puts the truth back.
+    b.parentElement.querySelectorAll('.opt').forEach(o =>
+      o.classList.toggle('on', o.dataset.val === want));
+    if (stillOurs()) save({[f]: want});
   });
   document.querySelectorAll('#side textarea[data-field]').forEach(t =>
     t.onchange = e => { if (stillOurs()) save({[t.dataset.field]: e.target.value}, false); });
@@ -802,7 +815,7 @@ function autocomplete(inp, stillOurs){
 
 /* ---------- saving ---------- */
 let saveSeq = 0;
-async function save(fields, redraw = true){
+async function save(fields, redraw = true, opts = {}){
   const p = cur(); if (!p) return;
   // Everything this needs is taken now. The rest of it runs after an await, by
   // which time the recorder may well have moved on to the next photograph.
@@ -814,7 +827,7 @@ async function save(fields, redraw = true){
     else if (k === '_precision') here.precision = v;
     else here.values[k] = v;
   }
-  const grp = S.group && $('#grp')?.checked;
+  const grp = !opts.photoOnly && S.group && $('#grp')?.checked;
   const my = ++saveSeq;
   let res;
   try {
@@ -846,10 +859,15 @@ async function save(fields, redraw = true){
   if (fields[PRIMARY()] !== undefined) drawStrip();
   if (my !== saveSeq) return;
   const m = $('#savedMsg'); if (m){ m.classList.add('on'); setTimeout(() => m.classList.remove('on'), 700); }
-  if (redraw && !flag) drawStrip(); else markTile();
-  const focused = document.activeElement;
-  const inField = focused && focused.dataset && focused.dataset.field;
-  if ((redraw && !inField) || Object.keys(S.errors).length) drawSide();
+  // A whole event changes other tiles as well; a single record changes only this one.
+  if (grp && res.saved.length > 1) drawStrip(); else markTile();
+  // Redraw the form unless the recorder is in the middle of typing into it. Only
+  // a text box counts as typing: a chip that was just clicked is the focused
+  // element too, and skipping the redraw for that left it looking dead.
+  const el = document.activeElement;
+  const typing = !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
+                    && el.dataset && el.dataset.field);
+  if ((redraw && !typing) || Object.keys(S.errors).length) drawSide();
 }
 
 async function undoLast(){

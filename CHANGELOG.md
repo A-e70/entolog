@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.5.1
+
+**Tapping stage, sex or confidence did nothing visible.** The value was saved
+correctly every time, but the button never lit up, so the window looked frozen
+and there was no way to tell whether it had worked.
+
+The cause: a clicked button becomes the focused element and carries the same
+`data-field` marker a text box does, and the code that avoids redrawing the form
+while someone is typing was treating that as typing. It now looks at what kind of
+element has focus. A chip also lights up the moment it is pressed rather than
+waiting for the write to come back, so the window answers a tap immediately.
+
+Flagging now applies to the photograph rather than the whole specimen event,
+which is what the terminal has always done and what "flag for a second look" at a
+picture means.
+
 ## 1.5.0
 
 **A photograph can hold more than one record.** A light trap egg box holds ten
