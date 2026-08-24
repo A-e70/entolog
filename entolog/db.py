@@ -115,8 +115,24 @@ def connect(path: str | Path) -> Connection:
             if name not in have:
                 cx.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
     _carry_over(cx)
+    _backfill(cx)
     cx.commit()
     return cx
+
+
+def _backfill(cx):
+    """Work out grid references for photographs scanned before entolog could."""
+    if get_meta(cx, "gridrefs_backfilled"):
+        return
+    from . import locality
+    todo = cx.execute("SELECT id, lat, lon FROM photos WHERE lat IS NOT NULL "
+                      "AND COALESCE(gridref,'')=''").fetchall()
+    for row in todo:
+        ref = locality.osgb_gridref(row["lat"], row["lon"])
+        if ref:
+            cx.execute("UPDATE photos SET gridref=? WHERE id=?", (ref, row["id"]))
+    cx.commit()
+    set_meta(cx, "gridrefs_backfilled", len(todo))
 
 
 def _carry_over(cx):

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-BUILTIN = ("insects", "wildlife", "plants")
+BUILTIN = ("insects", "moths", "wildlife", "birds", "plants")
 
 # The window and the keyboard already use these, so a field may not claim one.
 RESERVED_KEYS = set("jkdgfe/?<>") | {"enter", "escape", "tab"}

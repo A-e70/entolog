@@ -1,0 +1,20 @@
+{
+  "name": "moths",
+  "title": "Light trap catch",
+  "primary": "taxon",
+  "fields": [
+    {"name": "taxon", "type": "text", "learn": true, "dwc": "scientificName",
+     "help": "as far as you can take it"},
+    {"name": "count", "type": "number", "min": 1, "dwc": "individualCount"},
+    {"name": "trap", "type": "choice", "digits": true, "open": false,
+     "choices": ["actinic", "MV", "LED", "sugar", "wine rope", "net", "at rest"]},
+    {"name": "worn", "type": "choice", "key": "w", "choices": ["", "fresh", "worn"]},
+    {"name": "retained", "type": "bool", "key": "r", "help": "kept for dissection"},
+    {"name": "host_plant", "type": "text", "learn": true, "key": "p",
+     "dwc": "associatedTaxa", "help": "for larvae and mines"},
+    {"name": "notes", "type": "multiline", "dwc": "occurrenceRemarks"}
+  ],
+  "entry": {"order": ["taxon", "count", "trap", "notes", "worn", "retained", "host_plant"]},
+  "export": {"columns": ["filename", "date", "time", "gridref", "locality",
+                         "taxon", "count", "trap", "worn", "host_plant", "notes"]}
+}

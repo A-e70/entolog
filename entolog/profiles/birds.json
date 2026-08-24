@@ -1,0 +1,21 @@
+{
+  "name": "birds",
+  "title": "Bird records",
+  "primary": "species",
+  "fields": [
+    {"name": "species", "type": "text", "learn": true, "dwc": "scientificName"},
+    {"name": "count", "type": "number", "min": 1, "dwc": "individualCount"},
+    {"name": "activity", "type": "choice", "digits": true, "dwc": "behavior",
+     "choices": ["singing", "calling", "flying over", "feeding", "perched",
+                 "carrying food", "nest building", "on nest", "dead"]},
+    {"name": "stage", "type": "choice", "key": "t", "dwc": "lifeStage",
+     "choices": ["", "adult", "immature", "juvenile", "pullus"]},
+    {"name": "sex", "type": "choice", "key": "x", "dwc": "sex",
+     "choices": ["", "male", "female", "unknown"]},
+    {"name": "habitat", "type": "text", "learn": true, "key": "h", "dwc": "habitat"},
+    {"name": "notes", "type": "multiline", "dwc": "occurrenceRemarks"}
+  ],
+  "entry": {"order": ["species", "count", "activity", "notes", "stage", "sex", "habitat"]},
+  "export": {"columns": ["filename", "date", "time", "latitude", "longitude", "locality",
+                         "species", "count", "activity", "stage", "sex", "notes"]}
+}

@@ -6,9 +6,19 @@ from __future__ import annotations
 import csv
 import io
 import json
+import uuid
+import zipfile
+from datetime import datetime, timezone
 
 from . import profile as P
 from . import records
+
+# GBIF will not register a dataset unless the licence is one of these three.
+LICENCES = {
+    "CC0": ("CC0 1.0", "http://creativecommons.org/publicdomain/zero/1.0/legalcode"),
+    "CC-BY": ("CC BY 4.0", "http://creativecommons.org/licenses/by/4.0/legalcode"),
+    "CC-BY-NC": ("CC BY-NC 4.0", "http://creativecommons.org/licenses/by-nc/4.0/legalcode"),
+}
 
 # Terms that come from the photograph itself, not from the recorder.
 DWC_PHOTO = [
@@ -19,6 +29,17 @@ DWC_PHOTO = [
     ("minimumElevationInMeters", "altitude_m"), ("locality", "locality"),
     ("verbatimCoordinates", "gridref"), ("recordedBy", "recorded_by"),
     ("associatedMedia", "filename"), ("recordNumber", "record_number"),
+    ("occurrenceStatus", "status"),
+]
+
+# iRecord takes any headings and asks you to map them, but these are the labels
+# it offers, so a file using them maps itself.
+IRECORD = [
+    ("Species or taxon name", None), ("Date", "date_uk"),
+    ("Spatial reference", "spatial_ref"), ("Location name", "locality"),
+    ("Recorder Name", "recorded_by"), ("Identified By", "recorded_by"),
+    ("Quantity", None), ("Stage", None), ("Sex", None),
+    ("Occurrence comment", None), ("Recorder certainty", None),
 ]
 
 
@@ -39,17 +60,38 @@ def photo_part(r, recorder="") -> dict:
         "path": r.get("path", ""), "record_number": r["id"],
         "occurrence_id": r.get("fingerprint") or f"entolog:{r['id']}",
         "basis": "HumanObservation", "datum": "WGS84" if lat is not None else "",
-        "recorded_by": recorder,
+        "recorded_by": recorder, "status": "present",
+        "date_uk": f"{date[8:10]}/{date[5:7]}/{date[0:4]}" if len(date) == 10 else "",
+        "spatial_ref": (r["gridref"] or
+                        (f"{lat:.5f}, {lon:.5f}" if lat is not None else "")),
     }
+
+
+def setting(cx, key, default=""):
+    row = cx.execute("SELECT v FROM meta WHERE k=?", (key,)).fetchone()
+    return json.loads(row["v"]) if row else default
+
+
+def dataset_id(cx) -> str:
+    """A stable id for this set of records, so an occurrenceID is unique in the
+    world and not just on this laptop."""
+    got = setting(cx, "dataset_id", "")
+    if not got:
+        got = str(uuid.uuid4())
+        cx.execute("INSERT INTO meta(k,v) VALUES('dataset_id',?) "
+                   "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (json.dumps(got),))
+        cx.commit()
+    return got
 
 
 def rows(cx, prof=None, only_determined=True):
     prof = prof or P.active(cx)
-    recorder = cx.execute("SELECT v FROM meta WHERE k='recorded_by'").fetchone()
-    recorder = json.loads(recorder["v"]) if recorder else ""
+    recorder = setting(cx, "recorded_by", "")
+    dsid = dataset_id(cx)
     for r in records.list_photos(cx, prof, "done" if only_determined else "all",
                                  limit=10 ** 9):
         d = photo_part(r, recorder)
+        d["occurrence_id"] = f"urn:entolog:{dsid}:{r['fingerprint']}"
         for f in prof["fields"]:
             d[f["name"]] = r["values"].get(f["name"], "")
         d["flagged"] = r["flagged"]
@@ -78,6 +120,20 @@ def dwc_columns(prof) -> list:
     return cols
 
 
+def _irecord_map(prof) -> dict:
+    """Match profile fields to iRecord's columns by their Darwin Core term,
+    which is the only thing the two have in common."""
+    by_term = {f.get("dwc"): f["name"] for f in prof["fields"] if f.get("dwc")}
+    return {
+        "Species or taxon name": by_term.get("scientificName", prof["primary"]),
+        "Quantity": by_term.get("individualCount"),
+        "Stage": by_term.get("lifeStage"),
+        "Sex": by_term.get("sex"),
+        "Occurrence comment": by_term.get("occurrenceRemarks"),
+        "Recorder certainty": by_term.get("identificationVerificationStatus"),
+    }
+
+
 def render(cx, fmt="csv", columns=None, only_determined=True, prof=None) -> str:
     prof = prof or P.active(cx)
     data = list(rows(cx, prof, only_determined=only_determined))
@@ -92,6 +148,17 @@ def render(cx, fmt="csv", columns=None, only_determined=True, prof=None) -> str:
         pairs = dwc_columns(prof)
         mapped = [{t: (1 if s == "_one" else d.get(s, "")) for t, s in pairs} for d in data]
         _delim(out, mapped, [t for t, _ in pairs])
+    elif fmt == "irecord":
+        mapped_from = _irecord_map(prof)
+        cols = [c for c, _ in IRECORD]
+        out_rows = []
+        for d in data:
+            row = {}
+            for col, source in IRECORD:
+                key = source or mapped_from.get(col)
+                row[col] = d.get(key, "") if key else ""
+            out_rows.append(row)
+        _delim(out, out_rows, cols)
     elif fmt == "json":
         json.dump(data, out, indent=2, default=str)
     elif fmt == "geojson":
@@ -111,6 +178,83 @@ def render(cx, fmt="csv", columns=None, only_determined=True, prof=None) -> str:
     else:
         raise ValueError(f"unknown format {fmt!r}")
     return out.getvalue()
+
+
+EML = """<?xml version="1.0" encoding="UTF-8"?>
+<eml:eml xmlns:eml="eml://ecoinformatics.org/eml-2.1.1"
+         xmlns:dc="http://purl.org/dc/terms/"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="eml://ecoinformatics.org/eml-2.1.1 eml.xsd"
+         packageId="{dsid}" system="entolog" scope="system" xml:lang="eng">
+  <dataset>
+    <alternateIdentifier>{dsid}</alternateIdentifier>
+    <title xml:lang="eng">{title}</title>
+    <creator>
+      <individualName><surName>{creator}</surName></individualName>
+      {email}
+    </creator>
+    <pubDate>{pubdate}</pubDate>
+    <language>eng</language>
+    <abstract><para>{abstract}</para></abstract>
+    <intellectualRights><para>This work is licensed under a
+      <ulink url="{licence_url}"><citetitle>{licence}</citetitle></ulink>
+      licence.</para></intellectualRights>
+    <contact>
+      <individualName><surName>{creator}</surName></individualName>
+      {email}
+    </contact>
+  </dataset>
+</eml:eml>
+"""
+
+META_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<archive xmlns="http://rs.tdwg.org/dwc/text/">
+  <core rowType="http://rs.tdwg.org/dwc/terms/Occurrence"
+        fieldsTerminatedBy="," linesTerminatedBy="\\n" fieldsEnclosedBy="&quot;"
+        ignoreHeaderLines="1" encoding="UTF-8">
+    <files><location>occurrence.csv</location></files>
+    <id index="0" />
+{fields}
+  </core>
+</archive>
+"""
+
+
+def _xml_escape(s) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def dwca(cx, prof=None, only_determined=True) -> bytes:
+    """A Darwin Core Archive: the occurrence table, a descriptor saying what each
+    column means, and the dataset metadata. This is what GBIF and the atlases
+    take, and it is a zip so it goes in one piece."""
+    prof = prof or P.active(cx)
+    dsid = dataset_id(cx)
+    pairs = dwc_columns(prof)
+    body = render(cx, "dwc", only_determined=only_determined, prof=prof)
+    fields = "\n".join(
+        f'    <field index="{i}" term="http://rs.tdwg.org/dwc/terms/{term}" />'
+        for i, (term, _src) in enumerate(pairs))
+    licence_key = setting(cx, "licence", "CC-BY")
+    licence, licence_url = LICENCES.get(licence_key, LICENCES["CC-BY"])
+    creator = setting(cx, "recorded_by", "") or "unnamed recorder"
+    email = setting(cx, "contact_email", "")
+    eml = EML.format(
+        dsid=_xml_escape(dsid),
+        title=_xml_escape(setting(cx, "dataset_title", "") or f"entolog records, {prof['title']}"),
+        creator=_xml_escape(creator),
+        email=f"<electronicMailAddress>{_xml_escape(email)}</electronicMailAddress>" if email else "",
+        pubdate=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        abstract=_xml_escape(setting(cx, "abstract", "") or
+                             "Species records made from photographs with entolog."),
+        licence=_xml_escape(licence), licence_url=_xml_escape(licence_url))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("occurrence.csv", body)
+        z.writestr("meta.xml", META_XML.format(fields=fields))
+        z.writestr("eml.xml", eml)
+    return buf.getvalue()
 
 
 def summary(cx, prof=None) -> str:

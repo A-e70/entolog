@@ -217,6 +217,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/export":
             fmt = qs.get("fmt", ["csv"])[0]
             allrows = qs.get("all", ["0"])[0] == "1"
+            if fmt == "dwca":
+                blob = export.dwca(cx, only_determined=not allrows)
+                return self._send(200, blob, "application/zip",
+                                  {"Content-Disposition":
+                                   'attachment; filename="occurrences-dwca.zip"'})
             try:
                 text = export.render(cx, fmt, only_determined=not allrows)
             except ValueError as e:

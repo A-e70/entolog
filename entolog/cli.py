@@ -7,7 +7,8 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import __version__, db, entry, export, locality, records
+from . import __version__, check as checkmod, db, demo as demomod, entry, export
+from . import locality, records
 from . import scan as scanmod, server, tsvedit
 from . import profile as P
 
@@ -67,6 +68,15 @@ def cmd_annotate(args) -> int:
 def cmd_export(args) -> int:
     cx = db.connect(_db_for(args))
     cols = args.columns.split(",") if args.columns else None
+    if args.format == "dwca":
+        blob = export.dwca(cx, only_determined=not args.all)
+        out = Path(args.out or "occurrences-dwca.zip")
+        out.write_bytes(blob)
+        print(f"wrote {out} ({len(blob) // 1024} KB): occurrence.csv, meta.xml, eml.xml")
+        print("This is the file GBIF, the NBN Atlas and an IPT take. Set who made the "
+              "records and the licence first if you have not:")
+        print('  entolog set recorded_by "Your Name"    entolog set licence CC-BY')
+        return 0
     text = export.render(cx, args.format, columns=cols, only_determined=not args.all)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
@@ -98,7 +108,11 @@ def cmd_profile(args) -> int:
     dbpath = _db_for(args)
     if args.action == "list":
         for name in P.BUILTIN:
-            prof = P.load(name)
+            try:
+                prof = P.load(name)
+            except P.ProfileError as e:
+                print(f"{name:10} cannot be loaded: {e}", file=sys.stderr)
+                continue
             mark = ""
             if dbpath.exists():
                 mark = "  <- in use" if P.active(db.connect(dbpath))["name"] == name else ""
@@ -134,8 +148,26 @@ def cmd_profile(args) -> int:
     return 1
 
 
+SETTINGS = {
+    "recorded_by": "who made the records, for recordedBy and identifiedBy",
+    "licence": "CC0, CC-BY or CC-BY-NC. GBIF takes no others",
+    "dataset_title": "what this set of records is called",
+    "contact_email": "a contact address in the archive metadata",
+    "abstract": "one paragraph about the dataset",
+    "status_format": "the status line an image viewer shows",
+}
+
+
 def cmd_set(args) -> int:
     cx = db.connect(_db_for(args))
+    if not args.key:
+        for k, why in SETTINGS.items():
+            print(f"  {k:15} {json.dumps(db.get_meta(cx, k, '')) :<28} {why}")
+        return 0
+    if args.key == "licence" and args.value not in export.LICENCES:
+        print(f"licence must be one of {', '.join(export.LICENCES)}. "
+              f"GBIF will not register a dataset under anything else.", file=sys.stderr)
+        return 1
     db.set_meta(cx, args.key, args.value)
     print(f"{args.key} = {args.value}")
     return 0
@@ -331,6 +363,110 @@ def _isnum(s: str) -> bool:
         return False
 
 
+def cmd_check(args) -> int:
+    cx, prof = _open(args)
+    findings = checkmod.run(cx, prof)
+    if args.json:
+        print(json.dumps(findings, indent=2))
+    else:
+        print(checkmod.report(findings))
+    return 1 if any(f["level"] == "error" for f in findings) else 0
+
+
+def cmd_demo(args) -> int:
+    folder = Path(args.folder).expanduser()
+    if folder.exists() and any(folder.iterdir()) and not args.force:
+        print(f"{folder} is not empty. Pass --force, or give another folder.",
+              file=sys.stderr)
+        return 1
+    made = demomod.build(folder)
+    print(f"{len(made['photos'])} demo photographs in {folder}")
+    dbpath = folder / DEFAULT_DB
+    cx = db.connect(dbpath)
+    scanmod.scan(cx, [folder])
+    records.import_terms(cx, "species",
+                         [f"{n}\t{v}" for n, v in demomod.CHECKLIST])
+    db.set_meta(cx, "recorded_by", "A Naturalist")
+    prof = P.active(cx)
+    ids = [r["id"] for r in cx.execute("SELECT id FROM photos ORDER BY seq")]
+    entry.record_one(cx, prof, entry.find(cx, str(ids[0])),
+                     "Vespa crabro / adult / f / on ivy, sunny bank", group=True)
+    entry.record_one(cx, prof, entry.find(cx, str(ids[4])),
+                     "Bombus terrestris / adult / worker / on bramble", group=True)
+    # The whole walk is in one wood, so give every position the same name rather
+    # than only the one the walk started from.
+    for place in locality.pending(cx):
+        locality.store(cx, place["lat"], place["lon"],
+                       "Wytham Woods, Wytham, Vale of White Horse, Oxfordshire, "
+                       "England, OX2 8QQ, United Kingdom", source="demo")
+    locality.apply_to_photos(cx)
+    print(f"scanned into {dbpath}, two specimen events already recorded, "
+          f"{len(demomod.CHECKLIST)} names loaded for autocomplete")
+    print("")
+    print("Try any of these:")
+    print(f"  entolog --db {dbpath} annotate      the window")
+    print(f"  entolog --db {dbpath} enter         the terminal")
+    print(f"  entolog --db {dbpath} edit          the table in $EDITOR")
+    print(f"  entolog --db {dbpath} check         the record cleaning pass")
+    print(f"  entolog --db {dbpath} export -f dwca -o records.zip")
+    print("")
+    print("The pictures are drawings, not photographs. Everything else is real.")
+    if args.no_open:
+        return 0
+    args.db, args.port, args.no_open = str(dbpath), args.port, False
+    return cmd_annotate(args)
+
+
+def cmd_doctor(args) -> int:
+    import shutil
+    import socket
+    ok = True
+    print(f"entolog {__version__}")
+    print(f"  python        {sys.version.split()[0]}  ({sys.executable})")
+    if sys.version_info < (3, 9):
+        print("                 too old, entolog needs 3.9 or newer")
+        ok = False
+    here = Path(__file__).resolve()
+    print(f"  running from  {'a single file bundle' if '.pyz' in str(here) else here.parent}")
+    try:
+        import PIL
+        print(f"  pillow        {PIL.__version__}, so raw files can be previewed")
+    except ImportError:
+        print("  pillow        not installed. Only needed to preview raw files "
+              "a browser cannot show")
+    print(f"  exiftool      {'found' if shutil.which('exiftool') else 'not installed. '
+          'Only used as a second opinion on HEIC and unusual raws'}")
+    try:
+        import readline                                    # noqa: F401
+        print("  readline      yes, so the terminal has history and tab completion")
+    except ImportError:
+        print("  readline      missing, so no tab completion in the terminal")
+    dbpath = _db_for(args)
+    print(f"  database      {dbpath}" + ("" if dbpath.exists() else "  (not made yet)"))
+    if dbpath.exists():
+        try:
+            cx = db.connect(dbpath)
+            prof = P.active(cx)
+            c = records.counts(cx, prof)
+            print(f"  profile       {prof['name']}: {', '.join(P.names(prof))}")
+            print(f"  records       {c['done']} of {c['total']} photographs")
+        except Exception as e:
+            print(f"                 cannot be opened: {e}")
+            ok = False
+    folder = dbpath.parent
+    print(f"  writable      {'yes' if os.access(folder, os.W_OK) else 'NO, ' + str(folder)}")
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 8731))
+        print("  port 8731     free")
+    except OSError:
+        print("  port 8731     in use, so the window will pick the next free one")
+    finally:
+        s.close()
+    print("\n" + ("everything needed is here" if ok else "something above needs fixing"))
+    return 0 if ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="entolog",
@@ -359,7 +495,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     e = sub.add_parser("export", help="write the table out")
     e.add_argument("-f", "--format", default="csv",
-                   choices=["csv", "tsv", "full", "dwc", "json", "geojson", "md"])
+                   choices=["csv", "tsv", "full", "dwc", "dwca", "irecord",
+                            "json", "geojson", "md"])
     e.add_argument("-o", "--out")
     e.add_argument("--columns", help="comma separated column list for csv/tsv")
     e.add_argument("--all", action="store_true", help="include photos with no species yet")
@@ -429,6 +566,20 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["todo", "all", "done", "flagged", "nogps"])
     tb.set_defaults(func=cmd_table)
 
+    ck = sub.add_parser("check", help="look for the problems a scheme would send back")
+    ck.add_argument("--json", action="store_true")
+    ck.set_defaults(func=cmd_check)
+
+    dm = sub.add_parser("demo", help="make a folder of demo photographs and open it")
+    dm.add_argument("folder", nargs="?", default="entolog-demo")
+    dm.add_argument("--force", action="store_true", help="use the folder even if it has files in")
+    dm.add_argument("--no-open", action="store_true")
+    dm.add_argument("--port", type=int, default=8731)
+    dm.set_defaults(func=cmd_demo)
+
+    dr = sub.add_parser("doctor", help="check this machine can run everything")
+    dr.set_defaults(func=cmd_doctor)
+
     lo = sub.add_parser("locality", help="turn a position into a place name")
     lo.add_argument("action", choices=["list", "import", "lookup", "shorten"])
     lo.add_argument("file", nargs="?",
@@ -442,8 +593,8 @@ def build_parser() -> argparse.ArgumentParser:
     lo.set_defaults(func=cmd_locality)
 
     st = sub.add_parser("set", help="store a setting, e.g. set recorded_by 'A Naturalist'")
-    st.add_argument("key")
-    st.add_argument("value")
+    st.add_argument("key", nargs="?")
+    st.add_argument("value", nargs="?", default="")
     st.set_defaults(func=cmd_set)
     return p
 
@@ -457,8 +608,31 @@ def main(argv=None) -> int:
             return 1
         return cmd_annotate(build_parser().parse_args(
             ["annotate"] + (["--db", str(_db_for(args))])))
+    if not argv:
+        print(FIRST_RUN.format(version=__version__))
+        return 0
     args = build_parser().parse_args(argv)
     if not getattr(args, "func", None):
         build_parser().print_help()
         return 0
     return args.func(args)
+
+
+FIRST_RUN = """entolog {version}, photographs to a species record table
+
+Two ways to start:
+
+  entolog demo                 try it on 21 demo photographs, no camera needed
+  entolog ~/photos/june        read your own folder and open the window
+
+Once a folder has been read:
+
+  entolog enter                record from the keyboard, no window
+  entolog edit                 the whole table in $EDITOR
+  entolog check                the problems a recording scheme would send back
+  entolog export -f dwca -o records.zip     a Darwin Core Archive
+  entolog profile list         the fields a record has, and how to change them
+
+  entolog --help               every command
+  entolog doctor               check this machine has what it needs
+"""
