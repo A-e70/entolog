@@ -7,7 +7,7 @@ decide on, from the window, the terminal, or the image viewer you already use.
 
 ![The entolog window](docs/img/window-insects.png)
 
-MIT licensed · no dependencies · 168 tests · one file to download · nothing leaves your machine
+MIT licensed · no dependencies · 202 tests · one file to download · nothing leaves your machine
 
 ## The problem
 
@@ -103,6 +103,17 @@ is the record, saved as you type. There is no save button.
 | your letters | whatever `key` you gave each field |
 | `G` | whole event on or off |
 | `F` | flag for a second look |
+
+Any field that learns suggests as you type, from the species already in your
+records and from whatever checklist you loaded. What you have recorded before
+comes first, a common name finds the scientific one, and an abbreviation finds
+the only thing it can mean.
+
+<img src="docs/img/suggest.png" alt="Typing 'deil' offers Deilephila elpenor, marked with four records, and Deilephila porcellus, marked as on the checklist. A line underneath says Enter keeps deil as typed." width="440">
+
+Nothing you type is ever replaced unless you choose a suggestion. The line under
+the list says so while you type, and pressing Enter without choosing keeps
+exactly what you wrote.
 
 ### The terminal
 
@@ -325,7 +336,7 @@ Everything lives in one SQLite file next to the photographs, `entolog.db`. It is
 the record, so back it up with them.
 
 ```bash
-python3 -m unittest discover -s tests      # 168 tests, no network, no camera
+python3 -m unittest discover -s tests      # 202 tests, no network, no camera
 ./build.sh                                 # dist/entolog.pyz, one file
 ```
 

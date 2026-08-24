@@ -161,7 +161,8 @@ class Handler(BaseHTTPRequestHandler):
     def _authed(self, qs) -> bool:
         token = qs.get("t", [""])[0]
         if not token:
-            m = re.search(r"entolog=([A-Za-z0-9_-]+)", self.headers.get("Cookie", "") or "")
+            name = f"entolog_{self.server.server_address[1]}"
+            m = re.search(rf"{name}=([A-Za-z0-9_-]+)", self.headers.get("Cookie", "") or "")
             token = m.group(1) if m else ""
         return secrets.compare_digest(token, self.ctx.token)
 
@@ -184,8 +185,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path in ("/", "/index.html"):
             html = _app_html()
+            # Named for the port as well, so two windows do not share one cookie.
+            name = f"entolog_{self.server.server_address[1]}"
             return self._send(200, html, "text/html; charset=utf-8",
-                              {"Set-Cookie": f"entolog={self.ctx.token}; Path=/; SameSite=Strict; HttpOnly"})
+                              {"Set-Cookie": f"{name}={self.ctx.token}; Path=/; "
+                                             f"SameSite=Strict; HttpOnly"})
         if path == "/api/state":
             prof = P.active(cx)
             return self._json({

@@ -7,6 +7,8 @@ recorder's fields by the leading underscore that profiles are not allowed to use
 
 from __future__ import annotations
 
+import re
+
 from . import profile as P
 
 FLAG = "_flag"
@@ -121,11 +123,80 @@ def learn(cx, field: str, value: str, uses: int = 1):
                (field, value, uses, uses))
 
 
-def suggest(cx, field: str, q: str = "", limit: int = 40) -> list:
-    like = f"%{q}%"
-    return [dict(r) for r in cx.execute(
-        "SELECT value, note, uses FROM terms WHERE field=? AND (value LIKE ? OR note LIKE ?) "
-        "ORDER BY uses DESC, value LIMIT ?", (field, like, like, limit))]
+def known_values(cx, field: str) -> dict:
+    """Every value this field holds, with how many records hold it, merged with
+    whatever checklist has been loaded. Derived from the records themselves, so
+    it needs no upkeep: record a species and it is offered from then on, remove
+    the last record of it and it stops being offered."""
+    out = {}
+    for row in cx.execute("SELECT value, COUNT(*) n FROM field_values "
+                          "WHERE field=? AND value!='' GROUP BY value", (field,)):
+        out[row["value"]] = {"value": row["value"], "n": row["n"], "note": "",
+                             "listed": False}
+    for row in cx.execute("SELECT value, note, from_list FROM terms WHERE field=?",
+                          (field,)):
+        got = out.setdefault(row["value"], {"value": row["value"], "n": 0,
+                                            "note": "", "listed": False})
+        got["note"] = got["note"] or (row["note"] or "")
+        got["listed"] = got["listed"] or bool(row["from_list"])
+    return out
+
+
+# How well a candidate answers what has been typed. Lower is better, None means
+# it does not answer it at all.
+EXACT, STARTS, WORD, NOTE_STARTS, INITIALS, CONTAINS, NOTE_CONTAINS = range(7)
+
+
+def _words(s: str):
+    return [w for w in re.split(r"[^A-Za-z0-9]+", s) if w]
+
+
+def _initials_match(value: str, abbrev: str) -> bool:
+    """vecr matches Vespa crabro, and nothing else does."""
+    words = [w.lower() for w in _words(value)]
+    if len(words) < 2 or not abbrev:
+        return False
+    for cut in range(1, len(abbrev)):
+        if words[0].startswith(abbrev[:cut]) and words[1].startswith(abbrev[cut:]):
+            return True
+    return False
+
+
+def match_rank(value: str, note: str, q: str):
+    v, n, q = value.lower(), (note or "").lower(), q.lower()
+    if not q:
+        return EXACT
+    if v == q:
+        return EXACT
+    if v.startswith(q):
+        return STARTS
+    if any(w.lower().startswith(q) for w in _words(value)[1:]):
+        return WORD
+    if n.startswith(q) or any(w.lower().startswith(q) for w in _words(note)[1:]):
+        return NOTE_STARTS
+    if " " not in q and len(q) <= 8 and _initials_match(value, q):
+        return INITIALS
+    if q in v:
+        return CONTAINS
+    if q in n:
+        return NOTE_CONTAINS
+    return None
+
+
+def suggest(cx, field: str, q: str = "", limit: int = 20) -> list:
+    """What to offer for a half typed value. Ranked by how well it answers what
+    was typed, then by how often it has been recorded here."""
+    q = (q or "").strip()
+    known = known_values(cx, field)
+    out = []
+    for entry in known.values():
+        rank = match_rank(entry["value"], entry["note"], q)
+        if rank is None:
+            continue
+        out.append((rank, -entry["n"], not entry["listed"], entry["value"].lower(),
+                    dict(entry, rank=rank)))
+    out.sort(key=lambda row: row[:4])
+    return [row[4] for row in out[:limit]]
 
 
 def import_terms(cx, field: str, lines) -> int:

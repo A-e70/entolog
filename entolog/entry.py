@@ -135,8 +135,10 @@ def _format(fmt: str, fields: dict) -> str:
 # --------------------------------------------------------------------------
 # resolving what was typed into what the field allows
 def resolve(cx, prof, name: str, text: str):
-    """(value, note, candidates). Candidates non-empty means it was ambiguous
-    and nothing should be written until the recorder picks one."""
+    """(value, note, candidates). Candidates non-empty means it was ambiguous and
+    nothing should be written until the recorder picks one. A name is only ever
+    replaced when exactly one thing could have been meant, and the note says so.
+    The window offers the same list, from the same place."""
     f = P.field(prof, name)
     text = (text or "").strip()
     if not text or f is None:
@@ -154,32 +156,21 @@ def resolve(cx, prof, name: str, text: str):
         return text, "", []
     if not f["learn"]:
         return text, "", []
-    known = [r["value"] for r in cx.execute(
-        "SELECT value FROM terms WHERE field=? ORDER BY uses DESC, value", (name,))]
-    for k in known:
-        if k.lower() == text.lower():
-            return k, "", []
+
+    known = records.known_values(cx, name)
+    for value in known:
+        if value.lower() == text.lower():
+            return value, "", []                 # already a name, only the case differs
     if " " in text or len(text) > 12:
-        return text, "", []                      # a real name, typed out; leave it alone
-    low = text.lower()
-    hits = [k for k in known if k.lower().startswith(low)]
-    if not hits:                                 # initials: vecr -> Vespa crabro
-        hits = [k for k in known if _initials_match(k, low)]
-    if len(hits) == 1:
-        return hits[0], f"{text} -> {hits[0]}", []
-    if len(hits) > 1:
-        return text, "", hits[:12]
-    return text, "", []
-
-
-def _initials_match(term: str, abbrev: str) -> bool:
-    words = term.lower().split()
-    if len(words) < 2:
-        return False
-    for cut in range(1, len(abbrev)):
-        if words[0].startswith(abbrev[:cut]) and words[1].startswith(abbrev[cut:]):
-            return True
-    return False
+        return text, "", []                      # a real name, typed out. Leave it alone
+    hits = records.suggest(cx, name, text, limit=40)
+    if not hits:
+        return text, "", []
+    best = hits[0]["rank"]
+    shortlist = [h["value"] for h in hits if h["rank"] == best]
+    if len(shortlist) == 1:
+        return shortlist[0], f"{text} -> {shortlist[0]}", []
+    return text, "", shortlist[:12]
 
 
 # --------------------------------------------------------------------------
@@ -349,8 +340,9 @@ class Session:
             if row is not None:
                 row["values"].update({k: v for k, v in clean.items() if k != records.FLAG})
         self.last = {k: v for k, v in clean.items() if v and k != records.FLAG} or self.last
-        say.append(f"saved {len(ids)} photograph{'s' if len(ids) != 1 else ''}: "
-                   f"{record_summary(self.prof, self.photo['values'])}")
+        if ids:                      # an ambiguous name saves nothing, and says why
+            say.append(f"saved {len(ids)} photograph{'s' if len(ids) != 1 else ''}: "
+                       f"{record_summary(self.prof, self.photo['values'])}")
         if not errors:
             self.advance()
         return say

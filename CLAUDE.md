@@ -28,7 +28,9 @@ specimen events (150 s, 60 m). `server.py` is a `ThreadingHTTPServer` serving
 the profile, and builds the Darwin Core Archive. `locality.py` shortens a verbose
 reverse geocode and computes OSGB grid references offline. `entry.py` is the
 terminal loop, the status line and the viewer hooks; `tsvedit.py` is the editable
-table; `check.py` is the record cleaning pass; `demo.py` and `demodata.py` build
+table; `check.py` is the record cleaning pass;
+`records.suggest` is the one place suggestions are ranked, used by the window and
+by `entry.resolve`, so both offer the same list; `demo.py` and `demodata.py` build
 the demo folder using `exifwrite.py`, the only place EXIF is ever written.
 
 Values live in `field_values(photo_id, field, value)`, one row per field, so a
@@ -43,7 +45,7 @@ keyboard shortcuts and its help from `/api/state`. It reads itself through
 
 ## Before claiming it works
 
-`python3 -m unittest discover -s tests` is 168 tests: EXIF parsing, hemisphere
+`python3 -m unittest discover -s tests` is 202 tests: EXIF parsing, hemisphere
 signs, grouping, moved files, profile validation, custom fields the code has
 never seen, the 1.0 migration and every export format. They build their own
 JPEGs, so no camera and no Pillow.
@@ -51,4 +53,6 @@ JPEGs, so no camera and no Pillow.
 The window needs a real browser. Start a server with `ENTOLOG_TOKEN` set, then
 `bd inspect "http://127.0.0.1:8731/?t=TOKEN"`. Console errors do not show up in
 the Python tests. Test it against a profile that is **not** the default, or you
-are only testing the insect fields.
+are only testing the insect fields. `bd type` refuses fields whose placeholder
+looks like a credential, and "start typing" contains "pin", which is worth
+remembering before blaming the page.

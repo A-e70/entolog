@@ -226,6 +226,21 @@ class Server(unittest.TestCase):
             urllib.request.urlopen(self.base + "/api/state")
         self.assertEqual(e.exception.code, 403)
 
+    def test_the_session_cookie_is_named_for_the_port(self):
+        # Cookies are not scoped by port, so two entolog windows on one machine
+        # would otherwise log each other out.
+        r = self.get("/")
+        cookie = r.headers["Set-Cookie"]
+        self.assertIn(f"entolog_{self.httpd.server_address[1]}=", cookie)
+        self.assertIn("HttpOnly", cookie)
+
+    def test_another_windows_cookie_does_not_open_this_one(self):
+        req = urllib.request.Request(self.base.rstrip("/") + "/api/state")
+        req.add_header("Cookie", f"entolog_9999={self.token}")
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req)
+        self.assertEqual(e.exception.code, 403)
+
     def test_export_downloads(self):
         r = self.get("/api/export?fmt=csv&all=1")
         self.assertIn("attachment", r.headers["Content-Disposition"])

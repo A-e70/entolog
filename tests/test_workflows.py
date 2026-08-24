@@ -241,6 +241,17 @@ class Loop(Base):
         self.assertIn("count takes a number", " ".join(say))
         self.assertEqual(s.i, where)
 
+    def test_an_ambiguous_name_offers_the_choices_and_claims_nothing(self):
+        records.import_terms(self.cx, "species",
+                             ["Bombus terrestris", "Bombus lapidarius"])
+        s = self.sess(flt="all")
+        said = " ".join(s.handle("bomb")["say"])
+        self.assertIn("could be", said)
+        self.assertIn("Bombus terrestris", said)
+        self.assertNotIn("saved", said)
+        self.assertEqual(records.counts(self.cx, self.prof)["done"], 0)
+        self.assertEqual(s.i, 0)
+
     def test_blank_line_steps_on(self):
         s = self.sess(flt="all")
         s.handle("")

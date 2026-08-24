@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.3.0
+
+**Suggestions, from your own records.** Any field that learns now offers what is
+already in the dataset alongside whatever checklist was loaded, ranked so a name
+you have recorded before comes first. A common name finds the scientific one, a
+prefix finds the second word as well as the first, and an abbreviation finds the
+only thing it can mean. The list is derived from the records themselves, so it
+needs no upkeep: record a species and it is offered from then on, and it stops
+being offered when the last record of it goes.
+
+Nothing typed is ever replaced unless a suggestion is chosen. The window says so
+under the list while you type, and Enter without choosing keeps exactly what was
+written. The terminal uses the same list through the same code, resolves only
+when one thing could have been meant, and shows the choices when more could.
+
+**A quieter glass interface.** Translucent panels either side of the photograph,
+which itself stays on near black and is never tinted. Clearer selected and
+focused states: the chosen photograph lifts and glows, the record being worked on
+carries an accent bar, focused fields get a ring. Selected chips use dark ink on
+the bright fill, which is the difference between 2.7:1 and 4.7:1 contrast. Motion
+is off when the system asks for that, and there is a flat fallback where
+backdrop filters are not supported.
+
+**Fixed:** two entolog windows open on one machine logged each other out, because
+cookies are not scoped by port. The session cookie is now named for the port and
+the page carries its own token. The terminal no longer reports "saved 0
+photographs" after refusing an ambiguous name.
+
+202 tests.
+
 ## 1.2.1
 
 - Continuous integration: the suite on Python 3.9, 3.11, 3.13 and 3.14, on Linux,
