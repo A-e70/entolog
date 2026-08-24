@@ -79,6 +79,7 @@ def photo_part(r, recorder="", precision="") -> dict:
         "camera": r["camera"] or "", "lens": r["lens"] or "",
         "folder": rel.rsplit("/", 1)[0] if "/" in rel else "",
         "path": r.get("path", ""), "record_number": r["id"],
+        "record_on_photograph": 1,
         "occurrence_id": r.get("fingerprint") or f"entolog:{r['id']}",
         "basis": "HumanObservation", "datum": "WGS84" if lat is not None else "",
         "recorded_by": recorder, "status": "present",
@@ -114,12 +115,19 @@ def rows(cx, prof=None, only_determined=True):
     primary, taxon_cache = prof["primary"], {}
     for r in records.list_photos(cx, prof, "done" if only_determined else "all",
                                  limit=10 ** 9):
-        d = photo_part(r, recorder, r["precision"] or default_blur)
-        d["occurrence_id"] = f"urn:entolog:{dsid}:{r['fingerprint']}"
+      for occ, vals, flagged, precision in records.each_record(r):
+        if only_determined and not vals.get(primary):
+            continue
+        d = photo_part(r, recorder, precision or default_blur)
+        # The first record on a photograph keeps the identifier it always had.
+        d["occurrence_id"] = (f"urn:entolog:{dsid}:{r['fingerprint']}"
+                              + ("" if occ == 1 else f":{occ}"))
+        d["record_number"] = r["id"] if occ == 1 else f"{r['id']}.{occ}"
+        d["record_on_photograph"] = occ
         for f in prof["fields"]:
-            d[f["name"]] = r["values"].get(f["name"], "")
-        d["flagged"] = r["flagged"]
-        name = r["values"].get(primary, "")
+            d[f["name"]] = vals.get(f["name"], "")
+        d["flagged"] = flagged
+        name = vals.get(primary, "")
         if name:
             if name not in taxon_cache:
                 taxon_cache[name] = taxonomy.lookup(cx, name) or {}

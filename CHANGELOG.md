@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.5.0
+
+**A photograph can hold more than one record.** A light trap egg box holds ten
+moths, a leaf holds two mines, a flower holds a bumblebee and a hoverfly. Each
+record on a photograph is numbered, exports as its own occurrence, and the first
+one keeps the identifier it always had. **+ record** in the window, `:o +` in the
+terminal, a `record` column in the editable table, and nothing is written until
+something is typed, so changing your mind leaves nothing behind. A photograph
+with one record behaves exactly as it did.
+
+**The window can no longer fail silently**, which is what "it does not work
+sometimes" turned out to mean. Three separate causes, all now fixed:
+
+- The key is now a property of the record file rather than of one run, so a
+  bookmark, or a tab left open while entolog is restarted, keeps working.
+- A link with no key, or the wrong one, gets a page explaining what happened and
+  what to do, instead of the words `bad or missing token`.
+- Anything that fails now says so in the window with a way to try again. Before,
+  a refused request left a blank page and no explanation.
+
+**Two real data bugs found by testing the window rather than the code.** A field
+could write into whichever photograph was selected by the time it lost focus, so
+a name typed on one photograph could land on the next one. And a record applied
+to a whole specimen event was written into memory after the selection had already
+moved, so the window could show the wrong species against the right photograph.
+Both are fixed and both were invisible to the Python tests.
+
+Also: pressing E twice no longer throws, and `entolog annotate` flushes its link
+so piping the output shows it.
+
+273 tests.
+
 ## 1.4.0
 
 Five things stood between entolog and a record a scheme can use without touching.

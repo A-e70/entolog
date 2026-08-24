@@ -60,8 +60,10 @@ def cmd_annotate(args) -> int:
         print(f"no database at {dbpath}. Run: entolog scan <folder>", file=sys.stderr)
         return 1
     httpd, url = server.serve(dbpath, port=args.port)
-    print(f"entolog is at {url}")
-    print("keep this terminal open. Ctrl-C stops it. Work is saved as you type.")
+    # flush, so piping the output somewhere still shows the link
+    print(f"entolog is at {url}", flush=True)
+    print("keep this terminal open. Ctrl-C stops it. Work is saved as you type.",
+          flush=True)
     if not args.no_open:
         webbrowser.open(url)
     try:
@@ -615,6 +617,10 @@ def cmd_demo(args) -> int:
                      "Vespa crabro / adult / f / on ivy, sunny bank", group=True)
     entry.record_one(cx, prof, entry.find(cx, str(ids[4])),
                      "Bombus terrestris / adult / worker / on bramble", group=True)
+    # One photograph deliberately holds two things, because a real card does.
+    entry.record_one(cx, prof, entry.find(cx, str(ids[4])),
+                     "Episyrphus balteatus / adult / / on the same flower",
+                     group=False, occ=2)
     # The whole walk is in one wood, so give every position the same name rather
     # than only the one the walk started from.
     for place in locality.pending(cx):

@@ -16,9 +16,40 @@ PRECISION = "_precision"          # how coarsely this record may be published
 BUILT_IN = (FLAG, PRECISION)
 
 
-def values(cx, photo_id: int) -> dict:
+def values(cx, photo_id: int, occ: int = 1) -> dict:
     return {r["field"]: r["value"] for r in cx.execute(
-        "SELECT field, value FROM field_values WHERE photo_id=?", (photo_id,))}
+        "SELECT field, value FROM field_values WHERE photo_id=? AND occ=?",
+        (photo_id, occ))}
+
+
+def occurrences(cx, photo_id: int) -> list:
+    """Which records this photograph holds. The first always exists."""
+    got = {r["occ"] for r in cx.execute(
+        "SELECT DISTINCT occ FROM field_values WHERE photo_id=?", (photo_id,))}
+    return sorted(got | {1})          # the first is always there, even when empty
+
+
+def add_record(cx, photo_id: int, prof=None) -> int:
+    """The number a second thing in the same photograph would have: another moth
+    in the egg box, another mine on the same leaf.
+
+    Nothing is written. The record exists once something is typed into it, so
+    changing your mind leaves nothing behind."""
+    row = cx.execute("SELECT COALESCE(MAX(occ), 1) + 1 n FROM field_values "
+                     "WHERE photo_id=?", (photo_id,)).fetchone()
+    return row["n"]
+
+
+def remove_record(cx, photo_id: int, occ: int) -> bool:
+    """Take a record off a photograph. The first is emptied rather than removed,
+    because every photograph has one."""
+    if occ <= 1:
+        cx.execute("DELETE FROM field_values WHERE photo_id=? AND occ=1", (photo_id,))
+        cx.commit()
+        return False
+    cx.execute("DELETE FROM field_values WHERE photo_id=? AND occ=?", (photo_id, occ))
+    cx.commit()
+    return True
 
 
 def _attach(cx, rows):
@@ -28,19 +59,36 @@ def _attach(cx, rows):
         r["values"] = {}
         r["flagged"] = 0
         r["precision"] = ""
+        r["extra"] = {}          # every record after the first, by its number
     if by_id:
         marks = ",".join("?" * len(by_id))
         for v in cx.execute(
-                f"SELECT photo_id, field, value FROM field_values WHERE photo_id IN ({marks})",
-                tuple(by_id)):
+                f"SELECT photo_id, occ, field, value FROM field_values "
+                f"WHERE photo_id IN ({marks}) ORDER BY occ", tuple(by_id)):
             row = by_id[v["photo_id"]]
-            if v["field"] == FLAG:
-                row["flagged"] = 1 if v["value"] == "1" else 0
-            elif v["field"] == PRECISION:
-                row["precision"] = v["value"]
+            if v["occ"] == 1:
+                target = row
             else:
-                row["values"][v["field"]] = v["value"]
+                target = row["extra"].setdefault(
+                    str(v["occ"]), {"values": {}, "flagged": 0, "precision": ""})
+            if v["field"] == FLAG:
+                target["flagged"] = 1 if v["value"] == "1" else 0
+            elif v["field"] == PRECISION:
+                target["precision"] = v["value"]
+            else:
+                target["values"][v["field"]] = v["value"]
+    for r in rows:
+        r["occs"] = 1 + len(r["extra"])
     return rows
+
+
+def each_record(row):
+    """Every record on a listed photograph: (number, values, flagged, precision).
+    A photograph almost always has one, and this reads the same either way."""
+    yield 1, row["values"], row["flagged"], row["precision"]
+    for occ in sorted(row.get("extra", {}), key=int):
+        e = row["extra"][occ]
+        yield int(occ), e["values"], e["flagged"], e["precision"]
 
 
 PHOTO_COLS = ("id, filename, rel_path, taken_at, taken_source, lat, lon, altitude, "
@@ -50,14 +98,18 @@ PHOTO_COLS = ("id, filename, rel_path, taken_at, taken_source, lat, lon, altitud
 
 def list_photos(cx, prof, flt="all", q="", limit=5000) -> list:
     primary = prof["primary"]
-    sql = [f"SELECT {','.join('p.' + c.strip() for c in PHOTO_COLS.split(','))} FROM photos p",
-           "LEFT JOIN field_values pv ON pv.photo_id=p.id AND pv.field=?"]
-    args = [primary]
+    sql = [f"SELECT {','.join('p.' + c.strip() for c in PHOTO_COLS.split(','))} FROM photos p"]
+    args = []
     where = []
+    # A photograph counts as recorded when any record on it has a name.
+    recorded = ("EXISTS(SELECT 1 FROM field_values f WHERE f.photo_id=p.id "
+                "AND f.field=? AND f.value!='')")
     if flt == "todo":
-        where.append("COALESCE(pv.value,'')=''")
+        where.append("NOT " + recorded)
+        args.append(primary)
     elif flt == "done":
-        where.append("COALESCE(pv.value,'')!=''")
+        where.append(recorded)
+        args.append(primary)
     elif flt == "flagged":
         where.append("EXISTS(SELECT 1 FROM field_values f WHERE f.photo_id=p.id "
                      "AND f.field='_flag' AND f.value='1')")
@@ -76,9 +128,11 @@ def list_photos(cx, prof, flt="all", q="", limit=5000) -> list:
 
 def counts(cx, prof) -> dict:
     total = cx.execute("SELECT COUNT(*) c FROM photos").fetchone()["c"]
-    done = cx.execute("SELECT COUNT(*) c FROM field_values WHERE field=? AND value!=''",
+    done = cx.execute("SELECT COUNT(DISTINCT photo_id) c FROM field_values "
+                      "WHERE field=? AND value!=''", (prof["primary"],)).fetchone()["c"]
+    made = cx.execute("SELECT COUNT(*) c FROM field_values WHERE field=? AND value!=''",
                       (prof["primary"],)).fetchone()["c"]
-    return {"total": total, "done": done}
+    return {"total": total, "done": done, "records": made}
 
 
 KEEP_EDITS = 500          # how far back undo can reach
@@ -99,10 +153,11 @@ def undo(cx, times: int = 1) -> list:
         batch = row["b"]
         rows = cx.execute("SELECT * FROM edits WHERE batch=?", (batch,)).fetchall()
         for e in rows:
-            cx.execute("INSERT INTO field_values(photo_id, field, value, updated_at) "
-                       "VALUES(?,?,?,datetime('now')) ON CONFLICT(photo_id, field) "
+            cx.execute("INSERT INTO field_values(photo_id, occ, field, value, updated_at) "
+                       "VALUES(?,?,?,?,datetime('now')) "
+                       "ON CONFLICT(photo_id, occ, field) "
                        "DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-                       (e["photo_id"], e["field"], e["was"]))
+                       (e["photo_id"], e["occ"], e["field"], e["was"]))
         cx.execute("DELETE FROM edits WHERE batch=?", (batch,))
         cx.commit()
         done.append({"batch": batch, "values": len(rows),
@@ -122,7 +177,8 @@ def pending_undo(cx):
             "what": rows[0]["what"] if rows else ""}
 
 
-def save(cx, prof, photo_id: int, fields: dict, apply_group=False, batch=None) -> tuple:
+def save(cx, prof, photo_id: int, fields: dict, apply_group=False, batch=None,
+         occ: int = 1) -> tuple:
     """Write one or more field values. Returns (photo ids touched, {field: error}).
     A value that fails its own rule is still stored: losing what someone typed is
     worse than storing something odd, and the window shows the complaint."""
@@ -161,18 +217,19 @@ def save(cx, prof, photo_id: int, fields: dict, apply_group=False, batch=None) -
         batch = next_batch(cx)
     what = ", ".join(f"{k} {v!r}" if v else f"{k} cleared" for k, v in clean.items())
     for t in targets:
-        before = values(cx, t)
+        before = values(cx, t, occ)
         for k, v in clean.items():
             was = before.get(k, "")
             if was != v:
                 cx.execute(
-                    "INSERT INTO edits(batch, photo_id, field, was, became, what, at) "
-                    "VALUES(?,?,?,?,?,?,datetime('now'))", (batch, t, k, was, v, what))
+                    "INSERT INTO edits(batch, photo_id, occ, field, was, became, what, at) "
+                    "VALUES(?,?,?,?,?,?,?,datetime('now'))",
+                    (batch, t, occ, k, was, v, what))
             cx.execute(
-                "INSERT INTO field_values(photo_id, field, value, updated_at) "
-                "VALUES(?,?,?,datetime('now')) ON CONFLICT(photo_id, field) "
+                "INSERT INTO field_values(photo_id, occ, field, value, updated_at) "
+                "VALUES(?,?,?,?,datetime('now')) ON CONFLICT(photo_id, occ, field) "
                 "DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-                (t, k, v))
+                (t, occ, k, v))
     cx.execute("DELETE FROM edits WHERE batch <= ?", (batch - KEEP_EDITS,))
     for k, v in clean.items():
         f = P.field(prof, k)

@@ -56,7 +56,16 @@ def run(cx, prof=None) -> list:
                       "count": len(rows)})
 
     photos = records.list_photos(cx, prof, "all", limit=10 ** 9)
-    recorded = [p for p in photos if p["values"].get(primary)]
+    # One entry per record, not per photograph: a light trap photograph can hold
+    # several, and each is checked on its own.
+    recorded = []
+    for p in photos:
+        for occ, vals, _flag, _prec in records.each_record(p):
+            if vals.get(primary):
+                entry = dict(p)
+                entry["values"] = vals
+                entry["occ"] = occ
+                recorded.append(entry)
 
     # --- the record cannot be used without these -------------------------
     no_place = [p for p in recorded if p["lat"] is None and not p["gridref"]]
@@ -174,9 +183,12 @@ def run(cx, prof=None) -> list:
             f"{len(from_file)} records take their date from the file, not the EXIF",
             from_file, "Editing or copying a photograph can lose the original date")
 
+    # Only the first record on each photograph: a photograph deliberately
+    # holding two species is not a disagreement about one specimen.
     by_event = {}
     for p in recorded:
-        by_event.setdefault(p["group_id"], set()).add(p["values"].get(primary, ""))
+        if p.get("occ", 1) == 1:
+            by_event.setdefault(p["group_id"], set()).add(p["values"].get(primary, ""))
     mixed = [g for g, names in by_event.items() if len(names) > 1]
     if mixed:
         rows = [p for p in recorded if p["group_id"] in mixed]
@@ -188,7 +200,8 @@ def run(cx, prof=None) -> list:
     if flagged:
         add(NOTE, "still-flagged", plural(len(flagged), "photograph") + " still flagged", flagged)
 
-    todo = [p for p in photos if not p["values"].get(primary)]
+    todo = [p for p in photos
+            if not any(v.get(primary) for _o, v, _f, _pr in records.each_record(p))]
     if todo:
         add(NOTE, "not-recorded-yet",
             f"{len(todo)} of {len(photos)} photographs have no {primary} yet", todo)

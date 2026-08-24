@@ -180,6 +180,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(u.query)
         if not self._authed(qs):
+            if u.path in ("/", "/index.html"):     # a person, not the page's own code
+                return self._send(HTTPStatus.FORBIDDEN, DENIED, "text/html; charset=utf-8")
             return self._send(HTTPStatus.FORBIDDEN, "bad or missing token", "text/plain")
         cx, path = self.ctx.cx, u.path
 
@@ -247,12 +249,23 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authed(qs):
             return self._send(HTTPStatus.FORBIDDEN, "bad or missing token", "text/plain")
         cx, body = self.ctx.cx, self._body()
+        m = re.fullmatch(r"/api/record/(\d+)/add", u.path)
+        if m:
+            occ = records.add_record(cx, int(m.group(1)), P.active(cx))
+            return self._json({"occ": occ})
+        m = re.fullmatch(r"/api/record/(\d+)/remove", u.path)
+        if m:
+            removed = records.remove_record(cx, int(m.group(1)),
+                                            int(body.get("occ", 1)))
+            return self._json({"removed": removed,
+                               **records.counts(cx, P.active(cx))})
         m = re.fullmatch(r"/api/record/(\d+)", u.path)
         if m:
             fields = body.get("values", {k: v for k, v in body.items()
-                                          if k != "apply_group"})
+                                          if k not in ("apply_group", "occ")})
             ids, errors = records.save(cx, P.active(cx), int(m.group(1)), fields,
-                                       apply_group=bool(body.get("apply_group")))
+                                       apply_group=bool(body.get("apply_group")),
+                                       occ=int(body.get("occ", 1)))
             return self._json({"saved": ids, "errors": errors,
                                **records.counts(cx, P.active(cx))})
         if u.path == "/api/profile":
@@ -283,8 +296,47 @@ class Handler(BaseHTTPRequestHandler):
     do_HEAD = do_GET
 
 
+DENIED = """<!doctype html><meta charset="utf-8"><title>entolog</title>
+<style>
+ body{margin:0;height:100vh;display:grid;place-items:center;background:#080c14;
+   color:#e9eff8;font:16px/1.6 ui-sans-serif,system-ui,sans-serif}
+ .box{max-width:520px;padding:28px 32px;border-radius:16px;border:1px solid rgba(255,255,255,.1);
+   background:rgba(20,28,42,.8)}
+ h1{font-size:22px;margin:0 0 10px}
+ p{color:#9db0c9;margin:0 0 12px}
+ code{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);
+   border-radius:6px;padding:2px 7px;font:13px ui-monospace,monospace;color:#e9eff8}
+</style>
+<div class="box">
+ <h1>This link has no key, or the wrong one</h1>
+ <p>entolog only answers a browser that has the key it printed when it started,
+ so that nothing else on this machine can read your records.</p>
+ <p>Start it again and use the link it gives you:</p>
+ <p><code>entolog annotate</code></p>
+ <p>A bookmark keeps working now, because the key belongs to your record file
+ rather than to one run. An older bookmark, made before this version, will not.</p>
+</div>"""
+
+
+def token_for(dbpath) -> str:
+    """The key belongs to the record file, not to this run, so a bookmark or an
+    open tab still works after entolog is restarted. Anyone who can read the key
+    can already read the records it protects."""
+    if os.environ.get("ENTOLOG_TOKEN"):
+        return os.environ["ENTOLOG_TOKEN"]
+    cx = db.connect(dbpath)
+    try:
+        got = db.get_meta(cx, "session_token")
+        if not got:
+            got = secrets.token_urlsafe(16)
+            db.set_meta(cx, "session_token", got)
+        return got
+    finally:
+        cx.close()
+
+
 def serve(dbpath, host="127.0.0.1", port=8731) -> tuple[ThreadingHTTPServer, str]:
-    token = os.environ.get("ENTOLOG_TOKEN") or secrets.token_urlsafe(16)
+    token = token_for(dbpath)
     Handler.ctx = Ctx(Path(dbpath), token)
     for p in range(port, port + 20):
         try:

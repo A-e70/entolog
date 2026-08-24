@@ -7,7 +7,7 @@ decide on, from the window, the terminal, or the image viewer you already use.
 
 ![The entolog window](docs/img/window-insects.png)
 
-MIT licensed · no dependencies · 256 tests · one file to download · nothing leaves your machine
+MIT licensed · no dependencies · 273 tests · one file to download · nothing leaves your machine
 
 ## The problem
 
@@ -184,6 +184,21 @@ Columns are matched by name, so delete columns, reorder them, sort the rows, or
 cut it down to `id` and one field. Deleting a row does not delete the record. A
 value that fails a check is reported by line number and still kept.
 `entolog table` and `entolog apply` do the two halves separately.
+
+## More than one thing in a photograph
+
+A light trap egg box holds ten moths. A leaf holds two mines. A flower holds a
+bumblebee and a hoverfly. So a photograph can hold more than one record.
+
+<img src="docs/img/records.png" alt="Two records on one photograph: a tab labelled 1 Bombus terrestris, selected, and a tab labelled 2 Episyrphus balteatus." width="440">
+
+In the window, **+ record** adds one and a row of tabs appears at the top of the
+form. In the terminal it is `:o +`, and `:o` lists what a photograph holds. Each
+record exports as its own occurrence, with its own identifier, and the first
+record keeps the identifier it always had.
+
+Nothing is written until you type something, so changing your mind leaves nothing
+behind, and a photograph with one record looks and behaves exactly as before.
 
 ## Names, dates and positions
 
@@ -401,7 +416,7 @@ Everything lives in one SQLite file next to the photographs, `entolog.db`. It is
 the record, so back it up with them.
 
 ```bash
-python3 -m unittest discover -s tests      # 256 tests, no network, no camera
+python3 -m unittest discover -s tests      # 273 tests, no network, no camera
 ./build.sh                                 # dist/entolog.pyz, one file
 ```
 

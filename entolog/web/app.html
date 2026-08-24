@@ -286,6 +286,17 @@ select:focus{border-color:var(--accent);box-shadow:var(--ring)}
   background:var(--glass-soft);border:1px solid var(--line-soft);color:var(--text)
 }
 
+#trouble{
+  position:fixed;left:50%;top:64px;transform:translateX(-50%) translateY(-12px);
+  display:none;gap:12px;align-items:center;z-index:70;
+  padding:12px 18px;border-radius:14px;
+  background:var(--glass-strong);border:1px solid rgba(242,166,90,.5);
+  -webkit-backdrop-filter:blur(20px) saturate(170%);
+  backdrop-filter:blur(20px) saturate(170%);
+  box-shadow:var(--shadow);transition:.2s var(--ease)
+}
+#trouble.on{display:flex;transform:translateX(-50%) translateY(0)}
+#trouble span{color:var(--dim);max-width:420px}
 #toast{
   position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);
   padding:9px 18px;border-radius:99px;pointer-events:none;opacity:0;z-index:60;
@@ -389,20 +400,48 @@ const TOKEN = new URLSearchParams(location.search).get('t') || '';
 const withToken = p => !TOKEN ? p : p + (p.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TOKEN);
 const api = (p, o) => fetch(withToken(p), o).then(r => r.ok
   ? ((r.headers.get('content-type') || '').includes('json') ? r.json() : r.text())
-  : r.text().then(t => Promise.reject(t)));
-const S = {photos: [], i: 0, filter: 'todo', q: '', prof: null, last: null,
+  : r.text().then(t => Promise.reject(new Error(
+      r.status === 403 ? 'this window has the wrong key. Start entolog again and use the link it prints'
+                       : (t || ('the server said ' + r.status))))));
+const S = {photos: [], i: 0, occ: 1, filter: 'todo', q: '', prof: null, last: null,
            group: true, zoom: 1, ox: 0, oy: 0, errors: {}};
 const esc = s => (s ?? '').toString().replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const cur = () => S.photos[S.i];
 const FIELDS = () => S.prof.fields;
 const PRIMARY = () => S.prof.primary;
-const val = (p, n) => (p && p.values && p.values[n]) || '';
+// A photograph usually holds one record. When it holds several, S.occ says
+// which one the form is editing.
+const rec = p => !p ? {values: {}} :
+  (S.occ === 1 ? p : ((p.extra && p.extra[S.occ]) || {values: {}, flagged: 0, precision: ''}));
+const val = (p, n) => (rec(p).values || {})[n] || '';
+const isDone = p => !!(p && (p.values[PRIMARY()] ||
+  Object.values(p.extra || {}).some(e => e.values[PRIMARY()])));
+const recordCount = p => 1 + Object.keys((p && p.extra) || {}).length;
 const digitField = () => FIELDS().find(f => f.digits);
 const keyField = k => FIELDS().find(f => f.key === k);
 
+// Nothing here may fail silently. A window that shows nothing and says nothing
+// is the worst thing this program can do.
+function fail(err, retry){
+  const el = $('#trouble') || Object.assign(document.createElement('div'),
+    {id: 'trouble'});
+  el.innerHTML = `<b>entolog could not reach its records.</b>
+    <span>${esc(err && err.message ? err.message : String(err))}</span>
+    <button class="btn" id="retry">try again</button>`;
+  document.body.appendChild(el);
+  el.classList.add('on');
+  $('#retry').onclick = () => { el.classList.remove('on'); (retry || boot)(); };
+}
+function clearFail(){ $('#trouble')?.classList.remove('on'); }
+
+window.addEventListener('unhandledrejection', e => fail(e.reason));
+
 async function boot(){
-  const st = await api('/api/state');
+  let st;
+  try { st = await api('/api/state'); }
+  catch (e){ fail(e); return; }
+  clearFail();
   S.prof = st.profile; S.total = st.total; S.done = st.done;
   $('#prof').textContent = st.profile.title || st.profile.name;
   $('#prof').title = 'fields: ' + FIELDS().map(f => f.name).join(', ');
@@ -412,7 +451,13 @@ async function boot(){
 }
 
 async function load(keepId){
-  S.photos = await api('/api/photos?' + new URLSearchParams({filter: S.filter, q: S.q}));
+  try {
+    S.photos = await api('/api/photos?' + new URLSearchParams({filter: S.filter, q: S.q}));
+  } catch (e){
+    fail(e, () => load(keepId));
+    return;
+  }
+  clearFail();
   if (keepId){ const j = S.photos.findIndex(x => x.id === keepId); if (j >= 0) S.i = j; }
   if (S.i >= S.photos.length) S.i = Math.max(0, S.photos.length - 1);
   drawStrip(); show();
@@ -439,7 +484,7 @@ function drawStrip(){
     }
     const rot = (p.thumb_offset && p.orientation > 1)
       ? ` style="transform:rotate(${({3:180,6:90,8:270})[p.orientation] || 0}deg)"` : '';
-    const done = val(p, PRIMARY());
+    const done = isDone(p) ? (p.values[PRIMARY()] || 'recorded') : '';
     html += `<div class="tile${i === S.i ? ' sel' : ''}${done ? ' done' : ''}${p.flagged ? ' flag' : ''}" data-i="${i}" title="${esc(p.filename)}${done ? ' — ' + esc(done) : ''}">
       <img loading="lazy" src="${withToken(`/img/${p.id}?size=thumb`)}"${rot} alt="">
       <span class="dot"></span><span class="nm">${esc(p.filename)}</span></div>`;
@@ -454,7 +499,7 @@ function markTile(){
   const p = cur(); if (!p) return;
   const t = $(`#strip .tile[data-i="${S.i}"]`);
   if (t){
-    const done = val(p, PRIMARY());
+    const done = isDone(p) ? (p.values[PRIMARY()] || 'recorded') : '';
     t.classList.toggle('done', !!done);
     t.classList.toggle('flag', !!p.flagged);
     t.title = p.filename + (done ? ' — ' + done : '');
@@ -464,7 +509,7 @@ function markTile(){
 function select(i){
   if (i < 0 || i >= S.photos.length) return;
   document.querySelector('#strip .tile.sel')?.classList.remove('sel');
-  S.i = i; S.errors = {};
+  S.i = i; S.errors = {}; S.occ = 1;
   const t = $(`#strip .tile[data-i="${i}"]`);
   if (t){ t.classList.add('sel'); t.scrollIntoView({block: 'nearest'}); }
   show();
@@ -554,20 +599,27 @@ function drawSide(){
       ${p.lens ? `<dt>lens</dt><dd>${esc(p.lens)}</dd>` : ''}
     </dl>
   </div>
+  ${recordCount(p) > 1 ? `<div class="f"><span class="lab">records on this photograph</span>
+    <div class="opts" id="occs">${[1, ...Object.keys(p.extra || {}).map(Number).sort((a, b) => a - b)]
+      .map(o => `<button class="opt${o === S.occ ? ' on' : ''}" data-occ="${o}">${o}${
+        o === 1 ? (p.values[PRIMARY()] ? ' ' + esc(p.values[PRIMARY()]) : '')
+                : (p.extra[o] && p.extra[o].values[PRIMARY()] ? ' ' + esc(p.extra[o].values[PRIMARY()]) : '')}</button>`).join('')}
+      </div></div>` : ''}
   ${FIELDS().map(f => fieldHTML(f, p)).join('')}
   <div class="row">
     <label title="apply to every shot in this burst"><input type="checkbox" id="grp" ${S.group ? 'checked' : ''}> whole event (${gsize})</label>
     <div class="spacer"></div>
-    <button class="btn" id="flagBtn">${p.flagged ? 'unflag' : 'flag'}</button>
+    <button class="btn" id="addRec" title="something else in the same photograph">+ record</button>
+    <button class="btn" id="flagBtn">${rec(p).flagged ? 'unflag' : 'flag'}</button>
     <span class="saved" id="savedMsg">saved</span>
   </div>
   <div class="row">
     <label for="prec" style="color:var(--dim);font-size:12.5px" title="what a scheme may publish: the exact position, or only the square it falls in">publish as</label>
     <select id="prec">
       ${['', '100m', '1km', '2km', '10km', '100km'].map(v =>
-        `<option value="${v}"${(p.precision || '') === v ? ' selected' : ''}>${v || 'exact position'}</option>`).join('')}
+        `<option value="${v}"${(rec(p).precision || '') === v ? ' selected' : ''}>${v || 'exact position'}</option>`).join('')}
     </select>
-    ${p.precision ? `<span class="blurred">${esc(blurredRef(p))}</span>` : ''}
+    ${rec(p).precision ? `<span class="blurred">${esc(blurredRef(p))}</span>` : ''}
   </div>
   <div class="help">
     <kbd>J</kbd><span>next photograph</span>
@@ -580,6 +632,7 @@ function drawSide(){
     <kbd>F</kbd><span>flag for a second look</span>
     <kbd>/</kbd><span>jump to ${esc(PRIMARY())}</span>
     <kbd>Ctrl Z</kbd><span>undo the last change</span>
+    <kbd>+ record</kbd><span>a second thing in the same photograph</span>
     <kbd>wheel</kbd><span>zoom, drag to pan</span>
   </div>`;
   wireSide();
@@ -588,8 +641,8 @@ function drawSide(){
 function blurredRef(p){
   // Only a hint. The exported reference is worked out on the other side.
   const ref = p.gridref || '';
-  const keep = {'100m': 3, '1km': 2, '10km': 1, '100km': 0}[p.precision];
-  if (!ref || keep === undefined) return p.precision === '2km' ? 'tetrad' : '';
+  const keep = {'100m': 3, '1km': 2, '10km': 1, '100km': 0}[rec(p).precision];
+  if (!ref || keep === undefined) return rec(p).precision === '2km' ? 'tetrad' : '';
   const letters = ref.replace(/[0-9]/g, ''), digits = ref.replace(/[^0-9]/g, '');
   const half = digits.length / 2;
   return letters + digits.slice(0, keep) + digits.slice(half, half + keep);
@@ -597,23 +650,46 @@ function blurredRef(p){
 
 function wireSide(){
   const p = cur();
+  // A box belongs to the photograph and the record it was drawn for. Anything
+  // that fires late, a blur or a change, must not write into whatever happens
+  // to be selected by then.
+  const owner = {id: p.id, occ: S.occ};
+  const stillOurs = () => cur() && cur().id === owner.id && S.occ === owner.occ;
   $('#grp').onchange = e => S.group = e.target.checked;
-  $('#flagBtn').onclick = () => save({_flag: p.flagged ? '' : '1'}, false);
+  $('#flagBtn').onclick = () => save({_flag: rec(p).flagged ? '' : '1'}, false);
+  $('#addRec').onclick = async () => {
+    // No reload: the list is filtered, and this photograph might not be in it
+    // any more, which would move the selection out from under the recorder.
+    let res;
+    try {
+      res = await api(`/api/record/${p.id}/add`, {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: '{}'});
+    } catch (err){ fail(err); return; }
+    p.extra = p.extra || {};
+    p.extra[res.occ] = {values: {}, flagged: 0, precision: ''};
+    S.occ = res.occ;
+    drawSide();
+    focusField(PRIMARY());
+  };
+  document.querySelectorAll('#occs .opt').forEach(b => b.onclick = () => {
+    S.occ = +b.dataset.occ; S.errors = {}; drawSide();
+  });
   $('#prec').onchange = e => save({_precision: e.target.value});
   document.querySelectorAll('#side .opt').forEach(b => b.onclick = () => {
     const f = b.dataset.field;
     save({[f]: b.dataset.val === val(p, f) ? '' : b.dataset.val});
   });
   document.querySelectorAll('#side textarea[data-field]').forEach(t =>
-    t.onchange = e => save({[t.dataset.field]: e.target.value}, false));
+    t.onchange = e => { if (stillOurs()) save({[t.dataset.field]: e.target.value}, false); });
   document.querySelectorAll('#side input[data-field]').forEach(inp => {
-    if (inp.dataset.learn === '1') autocomplete(inp);
-    else inp.onchange = e => save({[inp.dataset.field]: e.target.value}, false);
+    if (inp.dataset.learn === '1') autocomplete(inp, stillOurs);
+    else inp.onchange = e => { if (stillOurs()) save({[inp.dataset.field]: e.target.value}, false); };
   });
 }
 
-function autocomplete(inp){
+function autocomplete(inp, stillOurs){
   const name = inp.dataset.field;
+  stillOurs = stillOurs || (() => true);
   const list = document.getElementById('ac-' + name);
   let items = [], sel = -1, timer = 0, seq = 0, cache = {q: null, items: []};
   const typed = () => inp.value.trim();
@@ -720,7 +796,7 @@ function autocomplete(inp){
   };
   inp.onblur = () => {
     close();
-    if (typed() !== val(cur(), name)) save({[name]: typed()}, false);
+    if (stillOurs() && typed() !== val(cur(), name)) save({[name]: typed()}, false);
   };
 }
 
@@ -728,12 +804,15 @@ function autocomplete(inp){
 let saveSeq = 0;
 async function save(fields, redraw = true){
   const p = cur(); if (!p) return;
-  const flag = '_flag' in fields;
-  p.values = p.values || {};
+  // Everything this needs is taken now. The rest of it runs after an await, by
+  // which time the recorder may well have moved on to the next photograph.
+  const occ = S.occ, flag = '_flag' in fields;
+  const here = rec(p);
+  here.values = here.values || {};
   for (const [k, v] of Object.entries(fields)){
-    if (k === '_flag') p.flagged = v ? 1 : 0;
-    else if (k === '_precision') p.precision = v;
-    else p.values[k] = v;
+    if (k === '_flag') here.flagged = v ? 1 : 0;
+    else if (k === '_precision') here.precision = v;
+    else here.values[k] = v;
   }
   const grp = S.group && $('#grp')?.checked;
   const my = ++saveSeq;
@@ -741,18 +820,21 @@ async function save(fields, redraw = true){
   try {
     res = await api('/api/record/' + p.id, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({values: fields, apply_group: grp})
+      body: JSON.stringify({values: fields, apply_group: grp, occ})
     });
   } catch (e){ S.errors = {_: String(e)}; drawSide(); return; }
   if (grp && res.saved.length > 1){
     const ids = new Set(res.saved);
     S.photos.forEach(x => {
       if (!ids.has(x.id)) return;
-      x.values = x.values || {};
+      const slot = occ === 1 ? x
+        : ((x.extra = x.extra || {}), (x.extra[occ] = x.extra[occ]
+            || {values: {}, flagged: 0, precision: ''}));
+      slot.values = slot.values || {};
       for (const [k, v] of Object.entries(fields)){
-        if (k === '_flag') x.flagged = v ? 1 : 0;
-        else if (k === '_precision') x.precision = v;
-        else x.values[k] = v;
+        if (k === '_flag') slot.flagged = v ? 1 : 0;
+        else if (k === '_precision') slot.precision = v;
+        else slot.values[k] = v;
       }
     });
   }
@@ -760,7 +842,8 @@ async function save(fields, redraw = true){
   document.title = `entolog ${res.done}/${res.total}`;
   S.errors = res.errors || {};
   S.last = Object.fromEntries(FIELDS()
-    .map(f => [f.name, val(p, f.name)]).filter(([, v]) => v !== ''));
+    .map(f => [f.name, (here.values || {})[f.name] || '']).filter(([, v]) => v !== ''));
+  if (fields[PRIMARY()] !== undefined) drawStrip();
   if (my !== saveSeq) return;
   const m = $('#savedMsg'); if (m){ m.classList.add('on'); setTimeout(() => m.classList.remove('on'), 700); }
   if (redraw && !flag) drawStrip(); else markTile();
@@ -795,7 +878,7 @@ function toast(text){
 
 function nextTodo(){
   for (let n = S.i + 1; n < S.photos.length; n++)
-    if (!val(S.photos[n], PRIMARY())){ select(n); return; }
+    if (!isDone(S.photos[n])){ select(n); return; }
   select(Math.min(S.i + 1, S.photos.length - 1));
 }
 
@@ -818,7 +901,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'g'){ S.group = !S.group; if ($('#grp')) $('#grp').checked = S.group; }
   else if (k === 'f' && p){ save({_flag: p.flagged ? '' : '1'}, false); }
   else if (k === 'd' && S.last){ save({...S.last}); }
-  else if (k === 'e'){ $('#exportDlg').showModal(); }
+  else if (k === 'e'){ openExport(); }
   else if (p && /^[1-9]$/.test(k) && digitField()){
     const f = digitField(), choice = f.choices[+k - 1];
     if (choice !== undefined) save({[f.name]: val(p, f.name) === choice ? '' : choice});
@@ -861,7 +944,8 @@ $('#followBtn').onclick = e => {
 /* ---------- header controls ---------- */
 $('#filters').onclick = e => { const c = e.target.closest('.chip'); if (c){ S.filter = c.dataset.f; S.i = 0; load(); } };
 let st; $('#search').oninput = e => { clearTimeout(st); st = setTimeout(() => { S.q = e.target.value.trim(); S.i = 0; load(); }, 220); };
-$('#exportBtn').onclick = () => $('#exportDlg').showModal();
+function openExport(){ const d = $('#exportDlg'); if (!d.open) d.showModal(); }
+$('#exportBtn').onclick = openExport;
 $('#exportDlg').onclick = e => {
   const a = e.target.closest('[data-fmt]'); if (!a) return;
   e.preventDefault();

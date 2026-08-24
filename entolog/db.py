@@ -53,12 +53,16 @@ CREATE TABLE IF NOT EXISTS records (
 
 -- One row per photograph per field. Fields come from the profile, so a record
 -- can hold whatever the recorder defined without a schema change.
+-- One row per photograph per record per field. A photograph usually holds one
+-- record, but a light trap egg box or a leaf with two mines holds several, so
+-- each record on a photograph has a number. The first is 1 and always exists.
 CREATE TABLE IF NOT EXISTS field_values (
   photo_id   INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  occ        INTEGER NOT NULL DEFAULT 1,
   field      TEXT NOT NULL,
   value      TEXT NOT NULL DEFAULT '',
   updated_at TEXT,
-  PRIMARY KEY (photo_id, field)
+  PRIMARY KEY (photo_id, occ, field)
 );
 CREATE INDEX IF NOT EXISTS field_values_field ON field_values(field, value);
 
@@ -91,6 +95,7 @@ CREATE TABLE IF NOT EXISTS edits (
   was      TEXT NOT NULL DEFAULT '',
   became   TEXT NOT NULL DEFAULT '',
   what     TEXT NOT NULL DEFAULT '',
+  occ      INTEGER NOT NULL DEFAULT 1,
   at       TEXT
 );
 CREATE INDEX IF NOT EXISTS edits_batch ON edits(batch DESC);
@@ -142,6 +147,7 @@ def connect(path: str | Path) -> Connection:
         for name, decl in cols.items():
             if name not in have:
                 cx.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    _several_records(cx)
     _carry_over(cx)
     _backfill(cx)
     cx.commit()
@@ -165,6 +171,32 @@ def _backfill(cx):
     set_meta(cx, "gridrefs_backfilled", "irish-too")
 
 
+def _several_records(cx):
+    """Before 1.5 a photograph could hold only one record. SQLite cannot change
+    a primary key in place, so the table is rebuilt once, keeping every value."""
+    cols = {r["name"] for r in cx.execute("PRAGMA table_info(field_values)")}
+    if not cols or "occ" in cols:
+        return
+    cx.executescript("""
+      CREATE TABLE field_values_rebuilt (
+        photo_id   INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+        occ        INTEGER NOT NULL DEFAULT 1,
+        field      TEXT NOT NULL,
+        value      TEXT NOT NULL DEFAULT '',
+        updated_at TEXT,
+        PRIMARY KEY (photo_id, occ, field)
+      );
+      INSERT INTO field_values_rebuilt(photo_id, occ, field, value, updated_at)
+        SELECT photo_id, 1, field, value, updated_at FROM field_values;
+      DROP TABLE field_values;
+      ALTER TABLE field_values_rebuilt RENAME TO field_values;
+      CREATE INDEX IF NOT EXISTS field_values_field ON field_values(field, value);
+    """)
+    if "occ" not in {r["name"] for r in cx.execute("PRAGMA table_info(edits)")}:
+        cx.execute("ALTER TABLE edits ADD COLUMN occ INTEGER NOT NULL DEFAULT 1")
+    cx.commit()
+
+
 def _carry_over(cx):
     """Records made before fields were user-defined lived in fixed columns.
     Move them across once, leaving the old table untouched as a safety net."""
@@ -176,14 +208,15 @@ def _carry_over(cx):
         if name not in old:
             continue
         moved += cx.execute(
-            "INSERT INTO field_values(photo_id, field, value, updated_at) "
-            f"SELECT photo_id, ?, {name}, COALESCE(updated_at, datetime('now')) FROM records "
+            "INSERT INTO field_values(photo_id, occ, field, value, updated_at) "
+            f"SELECT photo_id, 1, ?, {name}, COALESCE(updated_at, datetime('now')) FROM records "
             f"WHERE COALESCE({name},'') != '' "
-            "ON CONFLICT(photo_id, field) DO NOTHING", (name,)).rowcount
+            "ON CONFLICT(photo_id, occ, field) DO NOTHING", (name,)).rowcount
     if "flagged" in old:
-        cx.execute("INSERT INTO field_values(photo_id, field, value, updated_at) "
-                   "SELECT photo_id, '_flag', '1', datetime('now') FROM records "
-                   "WHERE COALESCE(flagged,0)=1 ON CONFLICT(photo_id, field) DO NOTHING")
+        cx.execute("INSERT INTO field_values(photo_id, occ, field, value, updated_at) "
+                   "SELECT photo_id, 1, '_flag', '1', datetime('now') FROM records "
+                   "WHERE COALESCE(flagged,0)=1 "
+                   "ON CONFLICT(photo_id, occ, field) DO NOTHING")
     for r in cx.execute("SELECT name, uses, vernacular FROM species"):
         cx.execute("INSERT INTO terms(field, value, uses, note) VALUES('species',?,?,?) "
                    "ON CONFLICT(field, value) DO NOTHING", (r["name"], r["uses"], r["vernacular"]))

@@ -30,6 +30,7 @@ HELP = """\
   :f todo      filter: todo all done flagged nogps
   :l [n]       the last n rows of the table    :w [file] write the table now
   :u           undo the last change            :p 1km  publish as a square only
+  :o           records on this photograph: :o 2, :o + for another, :o - to remove
   :h           this help                       :q quit
 """
 
@@ -92,8 +93,8 @@ def record_summary(prof, values: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
-def status_line(cx, prof, photo, i=None, n=None, fmt=None) -> str:
-    values = records.values(cx, photo["id"])
+def status_line(cx, prof, photo, i=None, n=None, fmt=None, occ=1) -> str:
+    values = records.values(cx, photo["id"], occ)
     taken = _get(photo, "taken_at")
     date, _, time = taken.partition("T")
     where = _get(photo, "locality")
@@ -228,7 +229,7 @@ def parse(prof, line: str):
 
 
 # --------------------------------------------------------------------------
-def record_one(cx, prof, photo, line, group=False) -> tuple:
+def record_one(cx, prof, photo, line, group=False, occ: int = 1) -> tuple:
     """Apply one line, or a ready made {field: value}, to one photograph.
     Returns (messages, ids touched, values written, errors)."""
     if isinstance(line, dict):
@@ -248,7 +249,8 @@ def record_one(cx, prof, photo, line, group=False) -> tuple:
         if note:
             say.append(note)
         clean[name] = value
-    ids, errors = records.save(cx, prof, photo["id"], clean, apply_group=group)
+    ids, errors = records.save(cx, prof, photo["id"], clean, apply_group=group,
+                               occ=occ)
     for f, err in errors.items():
         say.append(f"{f}: {err}")
     return say, ids, clean, errors
@@ -259,6 +261,7 @@ class Session:
     driven by a test as easily as by a person."""
 
     def __init__(self, cx, prof=None, flt="todo", per_photo=False, follow=False):
+        self.occ = 1
         self.cx = cx
         self.prof = prof or P.active(cx)
         self.filter = flt
@@ -284,6 +287,7 @@ class Session:
         j = self.i + delta
         if 0 <= j < len(self.photos):
             self.i = j
+            self.occ = 1
             return True
         return False
 
@@ -292,6 +296,7 @@ class Session:
         if j is None:
             return False
         self.i = j
+        self.occ = 1
         return True
 
     def advance(self):
@@ -337,16 +342,28 @@ class Session:
         if p is None:
             return ["nothing to record against"]
         say, ids, clean, errors = record_one(self.cx, self.prof, p, fields,
-                                             group=self.group)
+                                             group=self.group, occ=self.occ)
         for pid in ids:
             row = next((x for x in self.photos if x["id"] == pid), None)
-            if row is not None:
-                row["values"].update({k: v for k, v in clean.items() if k != records.FLAG})
+            if row is None:
+                continue
+            if self.occ == 1:
+                row["values"].update({k: v for k, v in clean.items()
+                                      if k not in records.BUILT_IN})
+            else:
+                slot = row.setdefault("extra", {}).setdefault(
+                    str(self.occ), {"values": {}, "flagged": 0, "precision": ""})
+                slot["values"].update({k: v for k, v in clean.items()
+                                       if k not in records.BUILT_IN})
+                row["occs"] = 1 + len(row["extra"])
         self.last = {k: v for k, v in clean.items() if v and k != records.FLAG} or self.last
         if ids:                      # an ambiguous name saves nothing, and says why
-            say.append(f"saved {len(ids)} photograph{'s' if len(ids) != 1 else ''}: "
-                       f"{record_summary(self.prof, self.photo['values'])}")
-        if not errors:
+            where = "" if self.occ == 1 else f" (record {self.occ})"
+            shown = (self.photo["values"] if self.occ == 1
+                     else self.photo["extra"][str(self.occ)]["values"])
+            say.append(f"saved {len(ids)} photograph{'s' if len(ids) != 1 else ''}"
+                       f"{where}: {record_summary(self.prof, shown)}")
+        if not errors and self.occ == 1:
             self.advance()
         return say
 
@@ -402,6 +419,42 @@ class Session:
             self.filter = arg
             self.reload(keep_id=p["id"] if p else None)
             return False, [f"{len(self.photos)} photographs"]
+        if cmd == "o":
+            if p is None:
+                return False, []
+            here = records.occurrences(self.cx, p["id"])
+            arg = arg.strip()
+            if arg in ("+", "add", "new"):
+                self.occ = records.add_record(self.cx, p["id"], self.prof)
+                return False, [f"record {self.occ} on this photograph. "
+                               f"Type what it is, or move on and nothing is kept."]
+            if arg in ("-", "drop"):
+                if self.occ == 1:
+                    return False, ["the first record cannot be removed, only cleared "
+                                   "with -"]
+                gone = self.occ
+                records.remove_record(self.cx, p["id"], self.occ)
+                self.occ = 1
+                self.reload(keep_id=p["id"])
+                return False, [f"record {gone} taken off this photograph"]
+            if arg:
+                try:
+                    want = int(arg)
+                except ValueError:
+                    return False, ["which record? :o 2, or :o + for another"]
+                if want not in here:
+                    return False, [f"this photograph has record"
+                                   f"{'s' if len(here) > 1 else ''} "
+                                   f"{', '.join(str(o) for o in here)}"]
+                self.occ = want
+                return False, []
+            lines = []
+            for o in here:
+                mark = ">" if o == self.occ else " "
+                lines.append(f" {mark} {o}  "
+                             f"{record_summary(self.prof, records.values(self.cx, p['id'], o)) or '-'}")
+            lines.append("   :o 2 to switch, :o + for another, :o - to remove one")
+            return False, lines
         if cmd in ("u", "undo"):
             done = records.undo(self.cx, 1)
             if not done:
@@ -452,8 +505,12 @@ def prompt_for(session) -> str:
     p = session.photo
     if p is None:
         return "(nothing to show) > "
-    line = status_line(session.cx, session.prof, p, session.i + 1, len(session.photos))
+    here = records.occurrences(session.cx, p["id"])
+    line = status_line(session.cx, session.prof, p, session.i + 1, len(session.photos),
+                       occ=session.occ)
     extra = f"  [event {p['group_id']}, {session.event_size()} shot(s)]" if session.group else ""
+    if len(here) > 1:
+        extra += f"  [record {session.occ} of {len(here)}]"
     return f"\n{line}{extra}\n> "
 
 

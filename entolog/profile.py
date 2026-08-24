@@ -92,7 +92,7 @@ def load(source) -> dict:
 PHOTO_FIELDS = ("filename", "date", "time", "datetime", "latitude", "longitude", "position",
                 "locality", "gridref", "grid_system", "precision", "altitude_m",
                 "coord_uncertainty_m", "group", "date_source", "camera", "lens",
-                "folder", "path", "record_number")
+                "folder", "path", "record_number", "record_on_photograph")
 
 
 def default_columns(prof) -> list:

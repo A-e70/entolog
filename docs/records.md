@@ -128,6 +128,32 @@ A blurred record exports as:
 
 The exact position stays in your own database. Only the export is coarsened.
 
+## More than one thing in one photograph
+
+A photograph usually holds one record and behaves exactly as it always has. When
+it holds more, each one is numbered.
+
+```
+> Noctua pronuba / 12
+saved 3 photographs: Noctua pronuba 12
+> :o +
+record 2 on this photograph. Type what it is, or move on and nothing is kept.
+> Xestia c-nigrum / 2
+saved 3 photographs (record 2): Xestia c-nigrum 2
+> :o
+ > 1  Noctua pronuba 12
+   2  Xestia c-nigrum 2
+   :o 2 to switch, :o + for another, :o - to remove one
+```
+
+In the window, **+ record** does the same and a row of tabs appears at the top of
+the form.
+
+Each record exports as its own occurrence with its own identifier. The first
+record on a photograph keeps the identifier it always had, so re-exporting after
+adding a second one does not disturb the first. An empty record is never written
+and never exported.
+
 ## Taking it back
 
 ```bash

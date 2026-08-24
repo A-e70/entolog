@@ -11,6 +11,7 @@ from . import export, records
 from . import profile as P
 
 KEY = "id"
+OCC = "record"
 NOTE = ("# entolog table. Edit the fields, save, quit.\n"
         "# Columns are matched by name, so you may reorder or delete columns.\n"
         "# {key} is read only and says which photograph a row belongs to.\n"
@@ -43,14 +44,18 @@ CONTEXT = ("filename", "date", "time", "locality", "gridref", "latitude", "longi
 def dump(cx, prof=None, flt="all", context=True) -> str:
     prof = prof or P.active(cx)
     editable = P.names(prof)
-    cols = [KEY] + editable + (list(CONTEXT) if context else [])
+    several = any(r["occs"] > 1 for r in records.list_photos(cx, prof, flt, limit=10 ** 9))
+    cols = [KEY] + ([OCC] if several else []) + editable + \
+        (list(CONTEXT) if context else [])
     lines = [NOTE.format(key=KEY, ro=", ".join(CONTEXT) if context else "none").rstrip("\n"),
              "\t".join(cols)]
     for r in records.list_photos(cx, prof, flt, limit=10 ** 9):
-        d = export.photo_part(r)
-        d.update(r["values"])
-        d[KEY] = r["id"]
-        lines.append("\t".join(esc(d.get(c, "")) for c in cols))
+        for occ, vals, _flag, _prec in records.each_record(r):
+            d = export.photo_part(r)
+            d.update(vals)
+            d[KEY] = r["id"]
+            d[OCC] = occ
+            lines.append("\t".join(esc(d.get(c, "")) for c in cols))
     return "\n".join(lines) + "\n"
 
 
@@ -76,9 +81,10 @@ def apply(cx, prof=None, text: str = "") -> dict:
                                   f"matched to photographs")
         return report
     key_at = header.index(KEY)
+    occ_at = header.index(OCC) if OCC in header else None
     use = [(i, name) for i, name in enumerate(header) if name in editable]
     report["ignored_columns"] = [c for c in header
-                                if c not in editable and c != KEY]
+                                if c not in editable and c not in (KEY, OCC)]
     if not use:
         report["problems"].append("no editable columns in the header: "
                                   + ", ".join(sorted(editable)))
@@ -99,8 +105,16 @@ def apply(cx, prof=None, text: str = "") -> dict:
         if row is None:
             report["unknown_rows"].append(pid)
             continue
+        occ = 1
+        if occ_at is not None and occ_at < len(cells) and cells[occ_at].strip():
+            try:
+                occ = max(1, int(cells[occ_at]))
+            except ValueError:
+                report["problems"].append(f"line {n}: {cells[occ_at]!r} is not a "
+                                          f"record number")
+                continue
         report["rows"] += 1
-        before = records.values(cx, pid)
+        before = records.values(cx, pid, occ)
         change = {}
         for i, name in use:
             if i >= len(cells):
@@ -111,7 +125,7 @@ def apply(cx, prof=None, text: str = "") -> dict:
         if not change:
             continue
         _ids, errors = records.save(cx, prof, pid, change, apply_group=False,
-                                    batch=batch)
+                                    batch=batch, occ=occ)
         for f, e in errors.items():
             report["problems"].append(f"line {n}, {f}: {e}")
         report["changed"] += 1

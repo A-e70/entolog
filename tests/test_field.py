@@ -427,3 +427,137 @@ class Backup(Base):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class SeveralOnOnePhotograph(Base):
+    """A light trap egg box holds ten moths, and a leaf can hold two mines."""
+
+    def test_the_first_record_is_the_only_one_until_another_is_asked_for(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        self.assertEqual(records.occurrences(self.cx, self.ids[0]), [1])
+
+    def test_asking_for_another_writes_nothing_until_something_is_typed(self):
+        occ = records.add_record(self.cx, self.ids[0], self.prof)
+        self.assertEqual(occ, 2)
+        self.assertEqual(records.occurrences(self.cx, self.ids[0]), [1])
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=occ)
+        self.assertEqual(records.occurrences(self.cx, self.ids[0]), [1, 2])
+
+    def test_the_second_record_leaves_the_first_alone(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro",
+                                                  "stage": "adult"})
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        self.assertEqual(records.values(self.cx, self.ids[0], 1)["species"],
+                         "Vespa crabro")
+        self.assertEqual(records.values(self.cx, self.ids[0], 2)["species"], "Aglais io")
+        self.assertEqual(records.values(self.cx, self.ids[0], 2).get("stage", ""), "")
+
+    def test_a_photograph_recorded_only_on_its_second_record_still_counts_as_done(self):
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        self.assertEqual(records.counts(self.cx, self.prof)["done"], 1)
+        self.assertEqual(len(records.list_photos(self.cx, self.prof, "done")), 1)
+        self.assertEqual(len(records.list_photos(self.cx, self.prof, "todo")), 2)
+
+    def test_the_counts_separate_photographs_from_records(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        got = records.counts(self.cx, self.prof)
+        self.assertEqual((got["done"], got["records"]), (1, 2))
+
+    def test_a_listed_photograph_carries_every_record_it_holds(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        row = records.list_photos(self.cx, self.prof, "all")[0]
+        self.assertEqual(row["occs"], 2)
+        self.assertEqual([o for o, _v, _f, _p in records.each_record(row)], [1, 2])
+        self.assertEqual([v.get("species") for _o, v, _f, _p in records.each_record(row)],
+                         ["Vespa crabro", "Aglais io"])
+
+    def test_taking_one_off_again(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        self.assertTrue(records.remove_record(self.cx, self.ids[0], 2))
+        self.assertEqual(records.occurrences(self.cx, self.ids[0]), [1])
+        self.assertEqual(records.values(self.cx, self.ids[0], 1)["species"],
+                         "Vespa crabro")
+
+    def test_the_first_record_is_emptied_rather_than_removed(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        self.assertFalse(records.remove_record(self.cx, self.ids[0], 1))
+        self.assertEqual(records.values(self.cx, self.ids[0], 1), {})
+
+    def test_each_record_exports_as_its_own_occurrence(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        rows = export.render(self.cx, "csv").strip().splitlines()
+        self.assertEqual(len(rows), 3)                      # header and two records
+        self.assertIn("Vespa crabro", rows[1])
+        self.assertIn("Aglais io", rows[2])
+
+    def test_the_first_record_keeps_the_identifier_it_always_had(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        first = export.render(self.cx, "dwc").splitlines()[1].split(",")[0]
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        after = export.render(self.cx, "dwc").splitlines()[1].split(",")[0]
+        second = export.render(self.cx, "dwc").splitlines()[2].split(",")[0]
+        self.assertEqual(first, after)
+        self.assertEqual(second, first + ":2")
+
+    def test_an_empty_second_record_is_not_exported(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        records.save(self.cx, self.prof, self.ids[0], {"stage": "adult"}, occ=2)
+        self.assertEqual(len(export.render(self.cx, "csv").strip().splitlines()), 2)
+
+    def test_the_table_grows_a_record_column_only_when_it_needs_one(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        self.assertNotIn("\trecord\t", tsvedit.dump(self.cx, self.prof))
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        text = tsvedit.dump(self.cx, self.prof)
+        self.assertIn("\trecord\t", text)
+        self.assertEqual(len([l for l in text.splitlines()
+                              if l.startswith(str(self.ids[0]) + "\t")]), 2)
+
+    def test_an_edited_table_goes_back_to_the_right_record(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        tsvedit.apply(self.cx, self.prof,
+                      f"id\trecord\tspecies\n{self.ids[0]}\t2\tInachis io\n")
+        self.assertEqual(records.values(self.cx, self.ids[0], 1)["species"],
+                         "Vespa crabro")
+        self.assertEqual(records.values(self.cx, self.ids[0], 2)["species"], "Inachis io")
+
+    def test_the_cleaning_pass_sees_two_records_not_one(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        records.save(self.cx, self.prof, self.ids[0], {"species": "vespa  crabro"},
+                     occ=2)
+        codes = {f["code"] for f in check.run(self.cx, self.prof)}
+        self.assertIn("same-name-two-ways", codes)
+
+    def test_undo_puts_back_the_record_it_changed(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        records.save(self.cx, self.prof, self.ids[0], {"species": "Aglais io"}, occ=2)
+        records.undo(self.cx)
+        self.assertEqual(records.values(self.cx, self.ids[0], 1)["species"],
+                         "Vespa crabro")
+        self.assertEqual(records.values(self.cx, self.ids[0], 2).get("species", ""), "")
+
+    def test_a_database_from_before_this_existed_still_opens(self):
+        server.save_record(self.cx, self.ids[0], {"species": "Vespa crabro"})
+        self.cx.commit()
+        # rebuild the table the way 1.4 had it, then reopen
+        self.cx.executescript("""
+          CREATE TABLE old_shape (photo_id INTEGER NOT NULL, field TEXT NOT NULL,
+            value TEXT NOT NULL DEFAULT '', updated_at TEXT,
+            PRIMARY KEY (photo_id, field));
+          INSERT INTO old_shape SELECT photo_id, field, value, updated_at
+            FROM field_values WHERE occ=1;
+          DROP TABLE field_values;
+          ALTER TABLE old_shape RENAME TO field_values;
+        """)
+        self.cx.commit()
+        self.cx.close()
+        cx = db.connect(self.tmp / "t.db")
+        self.addCleanup(cx.close)
+        self.assertIn("occ", {r["name"] for r in cx.execute(
+            "PRAGMA table_info(field_values)")})
+        self.assertEqual(records.values(cx, self.ids[0], 1)["species"], "Vespa crabro")

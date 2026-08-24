@@ -34,8 +34,9 @@ recorder supplies and `clock.py` measures the camera against the satellites;
 by `entry.resolve`, so both offer the same list; `demo.py` and `demodata.py` build
 the demo folder using `exifwrite.py`, the only place EXIF is ever written.
 
-Values live in `field_values(photo_id, field, value)`, one row per field, so a
-new field is data rather than a migration. The active profile is stored in `meta`
+Values live in `field_values(photo_id, occ, field, value)`, one row per field per
+record, so a new field is data rather than a migration and a photograph can hold
+more than one record. `occ` is 1 unless the recorder asked for another. The active profile is stored in `meta`
 so a database is self describing. `db._carry_over` moves 1.0 records out of the
 old fixed columns on first open; the old `records` table is deliberately left in
 place as a safety net.
@@ -46,7 +47,7 @@ keyboard shortcuts and its help from `/api/state`. It reads itself through
 
 ## Before claiming it works
 
-`python3 -m unittest discover -s tests` is 256 tests: EXIF parsing, hemisphere
+`python3 -m unittest discover -s tests` is 273 tests: EXIF parsing, hemisphere
 signs, grouping, moved files, profile validation, custom fields the code has
 never seen, the 1.0 migration and every export format. They build their own
 JPEGs, so no camera and no Pillow.
