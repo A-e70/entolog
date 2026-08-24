@@ -36,7 +36,11 @@ class Ctx:
         self.dbpath = Path(dbpath)
         self.token = token
         self.cache = self.dbpath.parent / ".entolog-cache"
-        self.cache.mkdir(exist_ok=True)
+        try:
+            self.cache.mkdir(exist_ok=True)
+        except OSError:                    # a read only folder, usually a card
+            import tempfile
+            self.cache = Path(tempfile.mkdtemp(prefix="entolog-"))
         self._local = threading.local()
 
     @property

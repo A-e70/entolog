@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "entolog"
-version = "1.2.0"
+version = "1.2.1"
 description = "Turn a folder of insect photographs into a species record table"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -23,4 +23,6 @@ entolog = "entolog.cli:main"
 packages = ["entolog"]
 
 [tool.setuptools.package-data]
-entolog = ["web/*.html"]
+# The profiles and the window are the program, not extras. Without them an
+# installed entolog cannot load a profile or serve a page.
+entolog = ["web/*.html", "profiles/*.json"]

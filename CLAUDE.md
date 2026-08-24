@@ -43,7 +43,7 @@ keyboard shortcuts and its help from `/api/state`. It reads itself through
 
 ## Before claiming it works
 
-`python3 -m unittest discover -s tests` is 159 tests: EXIF parsing, hemisphere
+`python3 -m unittest discover -s tests` is 168 tests: EXIF parsing, hemisphere
 signs, grouping, moved files, profile validation, custom fields the code has
 never seen, the 1.0 migration and every export format. They build their own
 JPEGs, so no camera and no Pillow.

@@ -72,4 +72,4 @@ The things that usually matter for evaluation:
   with exactly the fields it wants back.
 - Nothing leaves the machine unless the recorder runs `entolog locality lookup`,
   which is the only command that touches the network.
-- 159 tests, run with `python3 -m unittest discover -s tests`, no network needed.
+- 168 tests, run with `python3 -m unittest discover -s tests`, no network needed.

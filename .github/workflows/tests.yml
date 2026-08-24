@@ -59,3 +59,12 @@ jobs:
           python3 ../entolog.pyz export -f irecord -o irecord.csv
           printf 'Aglais urticae / adult\n:q\n' | python3 ../entolog.pyz enter
           python3 "$GITHUB_WORKSPACE/tools/check_archive.py" records.zip
+      - name: An installed copy must work as well as the bundle
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "$GITHUB_WORKSPACE"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/entolog" --version
+          "$RUNNER_TEMP/venv/bin/entolog" profile list
+          "$RUNNER_TEMP/venv/bin/entolog" demo installed-demo --no-open
+          cd installed-demo && "$RUNNER_TEMP/venv/bin/entolog" export -f tsv | head -2

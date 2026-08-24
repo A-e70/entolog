@@ -1,0 +1,2 @@
+[console_scripts]
+entolog = entolog.cli:main

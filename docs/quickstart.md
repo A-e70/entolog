@@ -2,6 +2,10 @@
 
 Five minutes, from nothing to a file a recording scheme will take.
 
+> **`entolog` here means whichever way you installed it:** the command,
+> `python3 entolog.pyz`, or `python3 -m entolog` from a clone. On Windows, `py`
+> rather than `python3`. See [installing](../README.md#install).
+
 ## 1. Try it without a camera card
 
 ```bash
@@ -49,6 +53,16 @@ saved 3 photographs: Vespa crabro adult female on ivy
 
 `.` repeats the last record. `vecr` resolves to the only name it can mean. Tab
 completes. `:h` lists everything.
+
+If you load a checklist with common names beside the scientific ones, typing the
+common name finds the record you want:
+
+```bash
+entolog terms species checklist.txt      # "Vespa crabro<TAB>hornet"
+```
+
+Then typing `hornet` in the window offers *Vespa crabro*. The record still keeps
+the scientific name, which is what a scheme wants.
 
 ## 4. Say who you are, once
 

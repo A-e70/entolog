@@ -4,6 +4,10 @@ entolog does not want to replace your viewer. Every workflow writes to the same
 database, through the same profile and the same validation, so you can use the
 window, the terminal, your own viewer, or all three in the same session.
 
+> **`entolog` below means whichever way you installed it.** If you are running
+> the single file, either move it onto your path as `entolog`, or write
+> `python3 /path/to/entolog.pyz` in these examples.
+
 Three commands are all the integration there is.
 
 ```bash

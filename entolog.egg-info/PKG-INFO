@@ -1,3 +1,16 @@
+Metadata-Version: 2.4
+Name: entolog
+Version: 1.2.0
+Summary: Turn a folder of insect photographs into a species record table
+License: MIT
+Keywords: entomology,biodiversity,exif,darwin core,recording
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Provides-Extra: raw
+Requires-Dist: pillow>=9; extra == "raw"
+Dynamic: license-file
+
 # entolog
 
 **Turn a folder of photographs into a species record table.** With the fields you
@@ -7,7 +20,7 @@ decide on, from the window, the terminal, or the image viewer you already use.
 
 ![The entolog window](docs/img/window-insects.png)
 
-MIT licensed · no dependencies · 168 tests · one file to download · nothing leaves your machine
+MIT licensed · no dependencies · 159 tests · one file to download · nothing leaves your machine
 
 ## The problem
 
@@ -255,44 +268,19 @@ iRecord, iNaturalist, MapMate and a spreadsheet.
 
 Python 3.9 or newer. Nothing else.
 
-**One file, nothing installed.** The quickest way to try it:
-
 ```bash
+# one file
 curl -LO https://github.com/A-e70/entolog/releases/latest/download/entolog.pyz
 python3 entolog.pyz demo
-```
 
-Move it onto your path and it becomes a command:
-
-```bash
-chmod +x entolog.pyz && mv entolog.pyz ~/.local/bin/entolog
-entolog demo
-```
-
-**As a package**, which also gives you the `entolog` command:
-
-```bash
-pipx install git+https://github.com/A-e70/entolog
-# or
-python3 -m pip install --user git+https://github.com/A-e70/entolog
-```
-
-**From source:**
-
-```bash
+# or from source
 git clone https://github.com/A-e70/entolog && cd entolog
 python3 -m entolog demo
 ```
 
-On Windows use `py` where these pages say `python3`.
-
-> Throughout the documentation, **`entolog`** means whichever of the three you
-> have: the command, `python3 entolog.pyz`, or `python3 -m entolog`. They are the
-> same program.
-
 Pillow is optional, only to preview raw files a browser cannot show. `exiftool`
-is optional, as a second opinion on HEIC and unusual raws. `entolog doctor` says
-what this machine has.
+is optional, as a second opinion on HEIC and unusual raws. `python3 -m entolog
+doctor` says what this machine has.
 
 ## Documentation
 
@@ -324,7 +312,7 @@ Everything lives in one SQLite file next to the photographs, `entolog.db`. It is
 the record, so back it up with them.
 
 ```bash
-python3 -m unittest discover -s tests      # 168 tests, no network, no camera
+python3 -m unittest discover -s tests      # 159 tests, no network, no camera
 ./build.sh                                 # dist/entolog.pyz, one file
 ```
 

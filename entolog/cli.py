@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import webbrowser
 from pathlib import Path
@@ -32,7 +33,7 @@ def _db_for(args) -> Path:
 
 def cmd_scan(args) -> int:
     dbpath = _db_for(args)
-    cx = db.connect(dbpath)
+    cx = _connect(dbpath)
     print(f"reading {', '.join(args.folders)} -> {dbpath}")
     r = scanmod.scan(cx, args.folders, recursive=not args.flat, gap_seconds=args.gap,
                      progress=lambda n, f: print(f"  {n} photos… {f}", end="\r", flush=True))
@@ -42,6 +43,13 @@ def cmd_scan(args) -> int:
     print(f"{r['groups']} specimen events (shots within {args.gap}s and 60 m of each other)")
     if r["missing"]:
         print(f"note: {r['missing']} photos in the database are no longer at their path")
+    if not cx.execute("SELECT COUNT(*) c FROM photos").fetchone()["c"]:
+        print(f"\nno photographs found in {', '.join(args.folders)}.", file=sys.stderr)
+        print("entolog reads jpg, jpeg, png, tif, tiff, webp, heic and the usual raw "
+              "files\n(nef, cr2, cr3, arw, raf, orf, rw2, dng and more). Check the "
+              "folder, and\nremember it looks in subfolders unless you pass --flat.",
+              file=sys.stderr)
+        return 1
     print(export.summary(cx))
     return 0
 
@@ -60,13 +68,13 @@ def cmd_annotate(args) -> int:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped.")
-        cx = db.connect(dbpath)
+        cx = _connect(dbpath)
         print(export.summary(cx))
     return 0
 
 
 def cmd_export(args) -> int:
-    cx = db.connect(_db_for(args))
+    cx = _connect(_db_for(args))
     cols = args.columns.split(",") if args.columns else None
     if args.format == "dwca":
         blob = export.dwca(cx, only_determined=not args.all)
@@ -92,7 +100,7 @@ def cmd_stats(args) -> int:
 
 
 def cmd_terms(args) -> int:
-    cx = db.connect(_db_for(args))
+    cx = _connect(_db_for(args))
     prof = P.active(cx)
     if args.field not in P.names(prof):
         print(f"the {prof['name']} profile has no field called {args.field!r}. "
@@ -119,7 +127,7 @@ def cmd_profile(args) -> int:
             print(f"{name:10} {prof['title']}{mark}")
             print(f"{'':10} {', '.join(P.names(prof))}")
         return 0
-    cx = db.connect(dbpath)
+    cx = _connect(dbpath)
     if args.action == "show":
         print(json.dumps(P.active(cx), indent=2))
         return 0
@@ -159,7 +167,7 @@ SETTINGS = {
 
 
 def cmd_set(args) -> int:
-    cx = db.connect(_db_for(args))
+    cx = _connect(_db_for(args))
     if not args.key:
         for k, why in SETTINGS.items():
             print(f"  {k:15} {json.dumps(db.get_meta(cx, k, '')) :<28} {why}")
@@ -173,12 +181,25 @@ def cmd_set(args) -> int:
     return 0
 
 
+def _connect(dbpath: Path):
+    """Open the record database, or explain why it cannot be opened. Pointing
+    entolog at a memory card is the usual reason."""
+    try:
+        return db.connect(dbpath)
+    except (OSError, sqlite3.OperationalError) as e:
+        print(f"cannot open {dbpath}: {e}", file=sys.stderr)
+        print("If the photographs are on a memory card or anywhere read only, "
+              "keep the records elsewhere:", file=sys.stderr)
+        print(f"  entolog --db ~/records/{dbpath.name} scan <folder>", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def _open(args):
     dbpath = _db_for(args)
     if not dbpath.exists():
         print(f"no database at {dbpath}. Run: entolog scan <folder>", file=sys.stderr)
         raise SystemExit(1)
-    cx = db.connect(dbpath)
+    cx = _connect(dbpath)
     return cx, P.active(cx)
 
 
@@ -382,7 +403,7 @@ def cmd_demo(args) -> int:
     made = demomod.build(folder)
     print(f"{len(made['photos'])} demo photographs in {folder}")
     dbpath = folder / DEFAULT_DB
-    cx = db.connect(dbpath)
+    cx = _connect(dbpath)
     scanmod.scan(cx, [folder])
     records.import_terms(cx, "species",
                          [f"{n}\t{v}" for n, v in demomod.CHECKLIST])
@@ -434,8 +455,9 @@ def cmd_doctor(args) -> int:
     except ImportError:
         print("  pillow        not installed. Only needed to preview raw files "
               "a browser cannot show")
-    print(f"  exiftool      {'found' if shutil.which('exiftool') else 'not installed. '
-          'Only used as a second opinion on HEIC and unusual raws'}")
+    exif = ("found" if shutil.which("exiftool") else
+            "not installed. Only used as a second opinion on HEIC and unusual raws")
+    print(f"  exiftool      {exif}")
     try:
         import readline                                    # noqa: F401
         print("  readline      yes, so the terminal has history and tab completion")
@@ -445,7 +467,7 @@ def cmd_doctor(args) -> int:
     print(f"  database      {dbpath}" + ("" if dbpath.exists() else "  (not made yet)"))
     if dbpath.exists():
         try:
-            cx = db.connect(dbpath)
+            cx = _connect(dbpath)
             prof = P.active(cx)
             c = records.counts(cx, prof)
             print(f"  profile       {prof['name']}: {', '.join(P.names(prof))}")

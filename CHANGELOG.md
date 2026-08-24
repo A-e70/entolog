@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.1
+
+- Continuous integration: the suite on Python 3.9, 3.11, 3.13 and 3.14, on Linux,
+  macOS and Windows, plus a job that builds `entolog.pyz`, runs the demo a
+  stranger runs first, and installs the package into a clean environment
+- **The profiles were missing from the installed package**, so `pip install`
+  followed by `entolog demo` could not load a profile. Fixed and now checked in CI
+- A line in `entolog doctor` could not be parsed by any Python before 3.12.
+  Nothing in the test suite imported the command line; now everything is imported
+- `rel_path` is stored with forward slashes whatever made it, so a database made
+  on Windows reads the same everywhere
+- Pointing entolog at a memory card or any read only folder explains itself
+  instead of ending in a traceback, and the thumbnail cache falls back to a
+  temporary folder
+- Scanning a folder with no photographs in says so, and says what it looks for
+- The documentation now says once, clearly, that `entolog` means whichever of the
+  three ways you installed it
+
 ## 1.2.0
 
 Ready for someone else to pick up.
