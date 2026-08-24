@@ -47,10 +47,14 @@ keyboard shortcuts and its help from `/api/state`. It reads itself through
 
 ## Before claiming it works
 
-`python3 -m unittest discover -s tests` is 273 tests: EXIF parsing, hemisphere
+`python3 -m unittest discover -s tests` is 286 tests: EXIF parsing, hemisphere
 signs, grouping, moved files, profile validation, custom fields the code has
 never seen, the 1.0 migration and every export format. They build their own
 JPEGs, so no camera and no Pillow.
+
+The zoom arithmetic in `app.html` sits between two `viewer maths` markers and is
+run in node by `tests/test_viewer.py`. Keep it free of anything browser shaped, or
+those tests stop working.
 
 The window needs a real browser. Start a server with `ENTOLOG_TOKEN` set, then
 `bd inspect "http://127.0.0.1:8731/?t=TOKEN"`. Console errors do not show up in

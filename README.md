@@ -7,7 +7,7 @@ decide on, from the window, the terminal, or the image viewer you already use.
 
 ![The entolog window](docs/img/window-insects.png)
 
-MIT licensed · no dependencies · 273 tests · one file to download · nothing leaves your machine
+MIT licensed · no dependencies · 286 tests · one file to download · nothing leaves your machine
 
 ## The problem
 
@@ -90,8 +90,13 @@ the hour, and keep using your own image viewer alongside any of them.
 
 Left is the folder, grouped into specimen events: consecutive shots within 150
 seconds and 60 metres are almost always the same individual, so they are grouped
-and you record them once. Middle is the photograph; scroll to zoom, drag to pan,
-double click for 3x, which matters when the difference is a tarsal segment. Right
+and you record them once. Middle is the photograph. Scroll to zoom and drag to pan, which matters when the
+difference is a tarsal segment. The point under the pointer stays under the
+pointer, a trackpad and a mouse wheel move at the same rate, and the photograph
+cannot be dragged off the edge of its own frame. Double click goes to the
+photograph's own pixels and back, `0` fits it again, and the readout says what
+you are looking at as a percentage, so it is obvious when a detail is
+interpolation rather than something that was really there. Right
 is the record, saved as you type. There is no save button.
 
 | key | does |
@@ -416,7 +421,7 @@ Everything lives in one SQLite file next to the photographs, `entolog.db`. It is
 the record, so back it up with them.
 
 ```bash
-python3 -m unittest discover -s tests      # 273 tests, no network, no camera
+python3 -m unittest discover -s tests      # 286 tests, no network, no camera
 ./build.sh                                 # dist/entolog.pyz, one file
 ```
 

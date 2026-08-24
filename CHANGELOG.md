@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.6.0
+
+**The photograph viewer.** Zooming jumped, bounced and ran away too fast, and the
+photograph slid out from under the pointer. Measured before the change: a point
+sitting at 0.800 across the photograph had drifted to 0.912 after four notches of
+the wheel. Measured after: it does not move at all, in or out, to any
+magnification.
+
+- **The anchor was being measured against a moving box.** The position came from
+  `getBoundingClientRect`, which already has the zoom in it, so every step
+  compounded the error. It now comes from the layout, which does not move.
+- **Every wheel event was a fixed jump**, so a trackpad sending fifty small
+  events zoomed fifty times as fast as a mouse sending one. Wheel deltas are now
+  normalised across pixels, lines and pages, a mouse notch is about a quarter
+  more, ten trackpad ticks are about a tenth more, a pinch is finer still, and
+  one violent flick is still one step.
+- **Zoom now eases towards where it is going** instead of snapping, so a run of
+  notches glides. Dragging still follows the hand exactly, and easing is off
+  where the system asks for reduced motion.
+- **The photograph can no longer be dragged off its own frame.** Larger than the
+  window it stops at its edges, smaller than the window it stays centred.
+- **A sensible limit tied to the photograph.** Zooming stops at twice the
+  photograph's own pixels rather than an arbitrary twelve, so it never becomes
+  mush. Double click goes to exactly 1:1 with those pixels and back, and `0` fits
+  it again.
+- **The readout is a percentage** of the photograph's own pixels, so it is
+  obvious when what is on screen is interpolation.
+
+The arithmetic behind all of that now lives in one marked block of `app.html` and
+is run in node by the test suite, so it is the shipped code being tested. Eleven
+new tests, skipped where node is not installed.
+
+286 tests.
+
 ## 1.5.1
 
 **Tapping stage, sex or confidence did nothing visible.** The value was saved

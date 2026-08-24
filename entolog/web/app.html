@@ -161,7 +161,13 @@ main{display:grid;grid-template-columns:236px 1fr 348px;min-height:0}
   position:relative;overflow:hidden;display:grid;place-items:center;
   background:var(--stage)
 }
-#stage img{max-width:100%;max-height:100%;transform-origin:0 0;user-select:none;-webkit-user-drag:none}
+#stage{touch-action:none}
+#stage img{
+  max-width:100%;max-height:100%;transform-origin:0 0;
+  user-select:none;-webkit-user-drag:none;
+  image-rendering:auto;          /* smooth, which is what a determination needs */
+  will-change:transform;         /* composited, so a zoom does not repaint the page */
+}
 #stage.zoomed{cursor:grab}
 #stage.zoomed.drag{cursor:grabbing}
 .hud{
@@ -521,39 +527,165 @@ function select(i){
 function show(){
   const p = cur(), stage = $('#stage');
   if (!p){ stage.innerHTML = '<div class="empty">nothing here. Try another filter.</div>'; $('#side').innerHTML = ''; return; }
-  S.zoom = 1; S.ox = 0; S.oy = 0;
   stage.classList.remove('zoomed');
-  stage.innerHTML = `<img id="big" src="${withToken(`/img/${p.id}?size=full`)}" alt="${esc(p.filename)}">
+  stage.innerHTML = `<img id="big" src="${withToken(`/img/${p.id}?size=full`)}" alt="${esc(p.filename)}" draggable="false">
     <div class="hud"><b>${S.i + 1}</b> of ${S.photos.length}
       <span>&middot;</span><span>${p.width && p.height ? p.width + '&times;' + p.height : ''}</span>
       <span>&middot;</span><span id="zl">fit</span></div>`;
+  const big = $('#big');
+  resetView();
+  // clientWidth is nothing until the photograph has arrived, and the largest
+  // useful magnification depends on how big it turned out to be.
+  big.addEventListener('load', resetView, {once: true});
   drawSide();
 }
 
-function applyZoom(){
-  const img = $('#big'); if (!img) return;
-  img.style.transform = `translate(${S.ox}px,${S.oy}px) scale(${S.zoom})`;
-  $('#stage').classList.toggle('zoomed', S.zoom !== 1);
-  $('#zl').textContent = S.zoom === 1 ? 'fit' : S.zoom.toFixed(1) + '×';
+/* ---------- viewer maths ---------- begin testable
+   Pure functions, no browser. tests/test_viewer.py runs this block in node. */
+function wheelFactor(deltaY, deltaMode, pinch){
+  // Wheels report pixels, lines or pages depending on the browser and device,
+  // and a trackpad sends many small events where a mouse sends one large one.
+  // Normalising to pixels first is what makes both feel the same.
+  const perLine = 16, perPage = 400;
+  let d = deltaY * (deltaMode === 1 ? perLine : (deltaMode === 2 ? perPage : 1));
+  d = Math.max(-160, Math.min(160, d));      // one violent flick is still one step
+  return Math.exp(-d * (pinch ? 0.010 : 0.0022));
 }
-function zoomAt(factor, cx, cy){
-  const img = $('#big'); if (!img) return;
-  const r = img.getBoundingClientRect();
-  const px = (cx - r.left - S.ox) / S.zoom, py = (cy - r.top - S.oy) / S.zoom;
-  const z = Math.min(12, Math.max(1, S.zoom * factor));
-  S.ox = cx - r.left - px * z; S.oy = cy - r.top - py * z;
-  S.zoom = z; if (z === 1){ S.ox = S.oy = 0; }
-  applyZoom();
+function maxZoom(natural, fitted){
+  // 1:1 with the source pixels is natural/fitted. A little beyond that is where
+  // a hair or a puncture becomes visible; far beyond it is only mush.
+  if (!natural || !fitted) return 8;
+  return Math.min(16, Math.max(2, (natural / fitted) * 2));
 }
-$('#stage').addEventListener('wheel', e => { e.preventDefault(); zoomAt(e.deltaY < 0 ? 1.18 : 1 / 1.18, e.clientX, e.clientY); }, {passive: false});
-$('#stage').addEventListener('dblclick', e => zoomAt(S.zoom > 1 ? 1 / S.zoom : 3, e.clientX, e.clientY));
+function clampZoom(z, max){ return Math.min(max, Math.max(1, z)); }
+function toLocal(point, base, offset, z){ return (point - base - offset) / z; }
+function panFor(point, base, local, z){ return point - base - local * z; }
+function clampPan(offset, base, size, view, z){
+  // Smaller than the view: centre it. Larger: never past its own edges.
+  const scaled = size * z;
+  if (scaled <= view) return (view - scaled) / 2 - base;
+  return Math.min(-base, Math.max(view - base - scaled, offset));
+}
+/* ---------- viewer maths ---------- end testable */
+
+const V = {z: 1, ox: 0, oy: 0, tz: 1, tox: 0, toy: 0, raf: 0, max: 8};
+const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function stageBox(){
+  const stage = $('#stage'), img = $('#big');
+  if (!img) return null;
+  const sr = stage.getBoundingClientRect();
+  // The untransformed position of the image inside the stage. Read from layout,
+  // never from getBoundingClientRect, which already has the transform in it.
+  return {sr, img, bx: img.offsetLeft, by: img.offsetTop,
+          w: img.clientWidth, h: img.clientHeight,
+          vw: stage.clientWidth, vh: stage.clientHeight};
+}
+
+function paint(){
+  const box = stageBox(); if (!box) return;
+  box.img.style.transform = `translate(${V.ox.toFixed(2)}px,${V.oy.toFixed(2)}px) scale(${V.z.toFixed(4)})`;
+  $('#stage').classList.toggle('zoomed', V.z > 1.001);
+  const zl = $('#zl');
+  if (zl){
+    // Say it as a percentage of the photograph's own pixels, so it is obvious
+    // when what is on screen is interpolation rather than detail.
+    const natural = box.img.naturalWidth;
+    const pct = natural && box.w ? Math.round(box.w * V.z / natural * 100) : 0;
+    zl.textContent = !pct ? V.z.toFixed(1) + '×'
+      : (V.z <= 1.001 && pct < 100 ? 'fit ' + pct + '%' : pct + '%');
+  }
+}
+
+function settle(){
+  // Ease towards the target rather than jumping to it, which is the difference
+  // between a wheel that bounces and one that glides.
+  const done = Math.abs(V.tz - V.z) < 0.0005
+    && Math.abs(V.tox - V.ox) < 0.3 && Math.abs(V.toy - V.oy) < 0.3;
+  if (done || !smooth){
+    V.z = V.tz; V.ox = V.tox; V.oy = V.toy; V.raf = 0; paint(); return;
+  }
+  const k = 0.28;
+  V.z += (V.tz - V.z) * k;
+  V.ox += (V.tox - V.ox) * k;
+  V.oy += (V.toy - V.oy) * k;
+  paint();
+  V.raf = requestAnimationFrame(settle);
+}
+function aim(z, ox, oy, now){
+  V.tz = z; V.tox = ox; V.toy = oy;
+  if (now || !smooth){ V.z = z; V.ox = ox; V.oy = oy; paint(); return; }
+  if (!V.raf) V.raf = requestAnimationFrame(settle);
+}
+
+function resetView(){
+  const box = stageBox();
+  V.max = box ? maxZoom(box.img.naturalWidth, box.w) : 8;
+  V.z = V.tz = 1; V.ox = V.tox = 0; V.oy = V.toy = 0;
+  if (V.raf){ cancelAnimationFrame(V.raf); V.raf = 0; }
+  paint();
+}
+
+function zoomTo(z, cx, cy, now){
+  const box = stageBox(); if (!box) return;
+  const want = clampZoom(z, V.max);
+  // Anchor on where the pointer is, measured against the target of any zoom
+  // still in flight, so a fast series of notches does not drift.
+  const bx = box.sr.left + box.bx, by = box.sr.top + box.by;
+  const u = toLocal(cx, bx, V.tox, V.tz), v = toLocal(cy, by, V.toy, V.tz);
+  let ox = panFor(cx, bx, u, want), oy = panFor(cy, by, v, want);
+  ox = clampPan(ox, box.bx, box.w, box.vw, want);
+  oy = clampPan(oy, box.by, box.h, box.vh, want);
+  aim(want, ox, oy, now);
+}
+
+$('#stage').addEventListener('wheel', e => {
+  if (!$('#big')) return;
+  e.preventDefault();
+  zoomTo(V.tz * wheelFactor(e.deltaY, e.deltaMode, e.ctrlKey), e.clientX, e.clientY);
+}, {passive: false});
+
+$('#stage').addEventListener('dblclick', e => {
+  const box = stageBox(); if (!box) return;
+  // Between fitting the window and the photograph's own pixels. When a small
+  // photograph is already at its own pixels, twice is the useful step instead.
+  const oneToOne = (box.img.naturalWidth / box.w) || 2;
+  zoomTo(V.tz > 1.001 ? 1 : clampZoom(Math.max(2, oneToOne), V.max),
+         e.clientX, e.clientY);
+});
+
 $('#stage').addEventListener('pointerdown', e => {
-  if (S.zoom === 1) return;
-  const sx = e.clientX - S.ox, sy = e.clientY - S.oy;
-  const st = $('#stage'); st.classList.add('drag'); st.setPointerCapture(e.pointerId);
-  const mv = m => { S.ox = m.clientX - sx; S.oy = m.clientY - sy; applyZoom(); };
-  const up = () => { st.classList.remove('drag'); st.removeEventListener('pointermove', mv); st.removeEventListener('pointerup', up); };
-  st.addEventListener('pointermove', mv); st.addEventListener('pointerup', up);
+  if (V.tz <= 1.001 || e.button !== 0) return;
+  const box = stageBox(); if (!box) return;
+  const st = $('#stage');
+  const sx = e.clientX - V.tox, sy = e.clientY - V.toy;
+  st.classList.add('drag');
+  st.setPointerCapture(e.pointerId);
+  const move = m => {
+    // Dragging follows the hand exactly. Nothing to ease here.
+    const ox = clampPan(m.clientX - sx, box.bx, box.w, box.vw, V.tz);
+    const oy = clampPan(m.clientY - sy, box.by, box.h, box.vh, V.tz);
+    aim(V.tz, ox, oy, true);
+  };
+  const up = () => {
+    st.classList.remove('drag');
+    st.removeEventListener('pointermove', move);
+    st.removeEventListener('pointerup', up);
+    st.removeEventListener('pointercancel', up);
+  };
+  st.addEventListener('pointermove', move);
+  st.addEventListener('pointerup', up);
+  st.addEventListener('pointercancel', up);
+});
+
+window.addEventListener('resize', () => {
+  // Keep the magnification through a resize, but bring the photograph back
+  // inside the window it now has.
+  const box = stageBox(); if (!box) return;
+  V.max = maxZoom(box.img.naturalWidth, box.w);
+  const z = clampZoom(V.tz, V.max);
+  aim(z, clampPan(V.tox, box.bx, box.w, box.vw, z),
+         clampPan(V.toy, box.by, box.h, box.vh, z), true);
 });
 
 /* ---------- the record form, built from the profile ---------- */
@@ -636,6 +768,7 @@ function drawSide(){
     <kbd>Ctrl Z</kbd><span>undo the last change</span>
     <kbd>+ record</kbd><span>a second thing in the same photograph</span>
     <kbd>wheel</kbd><span>zoom, drag to pan</span>
+    <kbd>0</kbd><span>fit the photograph again</span>
   </div>`;
   wireSide();
 }
@@ -920,6 +1053,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'f' && p){ save({_flag: p.flagged ? '' : '1'}, false); }
   else if (k === 'd' && S.last){ save({...S.last}); }
   else if (k === 'e'){ openExport(); }
+  else if (k === '0'){ resetView(); }
   else if (p && /^[1-9]$/.test(k) && digitField()){
     const f = digitField(), choice = f.choices[+k - 1];
     if (choice !== undefined) save({[f.name]: val(p, f.name) === choice ? '' : choice});
