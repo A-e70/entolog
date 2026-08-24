@@ -99,7 +99,9 @@ def scan(cx, roots, recursive=True, gap_seconds=150, progress=None) -> dict:
             if not taken:  # no EXIF date: file mtime, marked as such so it is auditable
                 taken = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%dT%H:%M:%S")
                 source = "file-mtime"
-            rel = str(f.relative_to(root)) if root.is_dir() else f.name
+            # Always forward slashes, so a database made on Windows reads the
+            # same everywhere and the exports agree.
+            rel = f.relative_to(root).as_posix() if root.is_dir() else f.name
             vals = dict(
                 path=p, filename=f.name, rel_path=rel, fingerprint=fp, bytes=st.st_size,
                 taken_at=taken, taken_source=source, lat=ex.get("lat"), lon=ex.get("lon"),

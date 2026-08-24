@@ -1,0 +1,61 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: ${{ matrix.os }}, python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest version entolog claims, two in between, and the newest.
+        os: [ubuntu-latest]
+        python: ["3.9", "3.11", "3.13", "3.14"]
+        include:
+          # entolog is standard library only, so the interesting risk is the
+          # operating system rather than the interpreter.
+          - os: macos-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: No packages should be needed
+        run: python -c "import sys; print(sys.version)"
+      - name: Run the suite
+        run: python -m unittest discover -s tests -v
+
+  artifact:
+    name: build and demo the single file
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.9"
+      - name: Build entolog.pyz
+        run: ./build.sh
+      - name: Everything a stranger does in their first five minutes
+        run: |
+          mkdir -p "$RUNNER_TEMP/try" && cd "$RUNNER_TEMP/try"
+          cp "$GITHUB_WORKSPACE/dist/entolog.pyz" .
+          python3 entolog.pyz --version
+          python3 entolog.pyz demo --no-open
+          cd entolog-demo
+          python3 ../entolog.pyz check
+          python3 ../entolog.pyz set licence CC-BY
+          python3 ../entolog.pyz export -f dwca -o records.zip
+          python3 ../entolog.pyz export -f irecord -o irecord.csv
+          printf 'Aglais urticae / adult\n:q\n' | python3 ../entolog.pyz enter
+          python3 "$GITHUB_WORKSPACE/tools/check_archive.py" records.zip

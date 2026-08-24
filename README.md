@@ -3,6 +3,8 @@
 **Turn a folder of photographs into a species record table.** With the fields you
 decide on, from the window, the terminal, or the image viewer you already use.
 
+[![tests](https://github.com/A-e70/entolog/actions/workflows/tests.yml/badge.svg)](https://github.com/A-e70/entolog/actions/workflows/tests.yml)
+
 ![The entolog window](docs/img/window-insects.png)
 
 MIT licensed · no dependencies · 159 tests · one file to download · nothing leaves your machine

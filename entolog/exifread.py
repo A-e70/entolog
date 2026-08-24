@@ -180,7 +180,9 @@ def _ts(s, subsec=None, offset=None) -> str | None:
     if subsec:
         d = "".join(ch for ch in str(subsec) if ch.isdigit())[:3]
         if d:
-            out += "." + d
+            # Always three digits: datetime.fromisoformat before 3.11 accepts
+            # only three or six, and a one digit fraction would break the parse.
+            out += "." + d.ljust(3, "0")
     if offset and isinstance(offset, str) and len(offset.strip()) >= 6:
         out += offset.strip()[:6]
     return out
