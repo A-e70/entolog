@@ -12,6 +12,8 @@ import re
 from . import profile as P
 
 FLAG = "_flag"
+PRECISION = "_precision"          # how coarsely this record may be published
+BUILT_IN = (FLAG, PRECISION)
 
 
 def values(cx, photo_id: int) -> dict:
@@ -25,6 +27,7 @@ def _attach(cx, rows):
     for r in rows:
         r["values"] = {}
         r["flagged"] = 0
+        r["precision"] = ""
     if by_id:
         marks = ",".join("?" * len(by_id))
         for v in cx.execute(
@@ -33,6 +36,8 @@ def _attach(cx, rows):
             row = by_id[v["photo_id"]]
             if v["field"] == FLAG:
                 row["flagged"] = 1 if v["value"] == "1" else 0
+            elif v["field"] == PRECISION:
+                row["precision"] = v["value"]
             else:
                 row["values"][v["field"]] = v["value"]
     return rows
@@ -40,7 +45,7 @@ def _attach(cx, rows):
 
 PHOTO_COLS = ("id, filename, rel_path, taken_at, taken_source, lat, lon, altitude, "
               "gridref, locality, orientation, camera, lens, width, height, group_id, "
-              "seq, bytes, thumb_offset, path, fingerprint")
+              "seq, bytes, thumb_offset, path, fingerprint, gridref_system")
 
 
 def list_photos(cx, prof, flt="all", q="", limit=5000) -> list:
@@ -76,11 +81,52 @@ def counts(cx, prof) -> dict:
     return {"total": total, "done": done}
 
 
-def save(cx, prof, photo_id: int, fields: dict, apply_group=False) -> tuple:
+KEEP_EDITS = 500          # how far back undo can reach
+
+
+def next_batch(cx) -> int:
+    row = cx.execute("SELECT COALESCE(MAX(batch), 0) + 1 b FROM edits").fetchone()
+    return row["b"]
+
+
+def undo(cx, times: int = 1) -> list:
+    """Put back the last change, or the last few. Returns what was put back."""
+    done = []
+    for _ in range(max(1, times)):
+        row = cx.execute("SELECT MAX(batch) b FROM edits").fetchone()
+        if row["b"] is None:
+            break
+        batch = row["b"]
+        rows = cx.execute("SELECT * FROM edits WHERE batch=?", (batch,)).fetchall()
+        for e in rows:
+            cx.execute("INSERT INTO field_values(photo_id, field, value, updated_at) "
+                       "VALUES(?,?,?,datetime('now')) ON CONFLICT(photo_id, field) "
+                       "DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                       (e["photo_id"], e["field"], e["was"]))
+        cx.execute("DELETE FROM edits WHERE batch=?", (batch,))
+        cx.commit()
+        done.append({"batch": batch, "values": len(rows),
+                     "photos": len({e["photo_id"] for e in rows}),
+                     "what": rows[0]["what"] if rows else ""})
+    return done
+
+
+def pending_undo(cx):
+    """What the next undo would put back, without doing it."""
+    row = cx.execute("SELECT MAX(batch) b FROM edits").fetchone()
+    if row["b"] is None:
+        return None
+    rows = cx.execute("SELECT * FROM edits WHERE batch=?", (row["b"],)).fetchall()
+    return {"batch": row["b"], "values": len(rows),
+            "photos": len({e["photo_id"] for e in rows}),
+            "what": rows[0]["what"] if rows else ""}
+
+
+def save(cx, prof, photo_id: int, fields: dict, apply_group=False, batch=None) -> tuple:
     """Write one or more field values. Returns (photo ids touched, {field: error}).
     A value that fails its own rule is still stored: losing what someone typed is
     worse than storing something odd, and the window shows the complaint."""
-    known = set(P.names(prof)) | {FLAG}
+    known = set(P.names(prof)) | set(BUILT_IN)
     errors, clean = {}, {}
     for k, v in fields.items():
         if k not in known:
@@ -88,6 +134,15 @@ def save(cx, prof, photo_id: int, fields: dict, apply_group=False) -> tuple:
             continue
         if k == FLAG:
             clean[k] = "1" if str(v) in ("1", "True", "true", "yes") else ""
+            continue
+        if k == PRECISION:
+            from . import locality
+            want = str(v or "").strip()
+            if want and want not in locality.PRECISION_METRES:
+                errors[k] = ("precision must be one of "
+                             + ", ".join(locality.PRECISION_METRES))
+                continue
+            clean[k] = want
             continue
         value, err = P.clean(prof, k, v)
         clean[k] = value
@@ -102,13 +157,23 @@ def save(cx, prof, photo_id: int, fields: dict, apply_group=False) -> tuple:
         if g and g["group_id"] is not None:
             targets = [r["id"] for r in cx.execute(
                 "SELECT id FROM photos WHERE group_id=? ORDER BY seq", (g["group_id"],))]
+    if batch is None:
+        batch = next_batch(cx)
+    what = ", ".join(f"{k} {v!r}" if v else f"{k} cleared" for k, v in clean.items())
     for t in targets:
+        before = values(cx, t)
         for k, v in clean.items():
+            was = before.get(k, "")
+            if was != v:
+                cx.execute(
+                    "INSERT INTO edits(batch, photo_id, field, was, became, what, at) "
+                    "VALUES(?,?,?,?,?,?,datetime('now'))", (batch, t, k, was, v, what))
             cx.execute(
                 "INSERT INTO field_values(photo_id, field, value, updated_at) "
                 "VALUES(?,?,?,datetime('now')) ON CONFLICT(photo_id, field) "
                 "DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
                 (t, k, v))
+    cx.execute("DELETE FROM edits WHERE batch <= ?", (batch - KEEP_EDITS,))
     for k, v in clean.items():
         f = P.field(prof, k)
         if v and f and (f["learn"] or f["type"] == "choice"):
@@ -123,16 +188,18 @@ def learn(cx, field: str, value: str, uses: int = 1):
                (field, value, uses, uses))
 
 
-def known_values(cx, field: str) -> dict:
+def known_values(cx, field: str, taxa: bool = False) -> dict:
     """Every value this field holds, with how many records hold it, merged with
     whatever checklist has been loaded. Derived from the records themselves, so
     it needs no upkeep: record a species and it is offered from then on, remove
     the last record of it and it stops being offered."""
-    out = {}
+    from . import taxonomy
+    out = taxonomy.as_values(cx) if taxa else {}
     for row in cx.execute("SELECT value, COUNT(*) n FROM field_values "
                           "WHERE field=? AND value!='' GROUP BY value", (field,)):
-        out[row["value"]] = {"value": row["value"], "n": row["n"], "note": "",
-                             "listed": False}
+        got = out.setdefault(row["value"], {"value": row["value"], "n": 0,
+                                            "note": "", "listed": False})
+        got["n"] = row["n"]
     for row in cx.execute("SELECT value, note, from_list FROM terms WHERE field=?",
                           (field,)):
         got = out.setdefault(row["value"], {"value": row["value"], "n": 0,
@@ -183,11 +250,11 @@ def match_rank(value: str, note: str, q: str):
     return None
 
 
-def suggest(cx, field: str, q: str = "", limit: int = 20) -> list:
+def suggest(cx, field: str, q: str = "", limit: int = 20, taxa: bool = False) -> list:
     """What to offer for a half typed value. Ranked by how well it answers what
     was typed, then by how often it has been recorded here."""
     q = (q or "").strip()
-    known = known_values(cx, field)
+    known = known_values(cx, field, taxa=taxa)
     out = []
     for entry in known.values():
         rank = match_rank(entry["value"], entry["note"], q)

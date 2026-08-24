@@ -81,6 +81,33 @@ CREATE TABLE IF NOT EXISTS species (
   from_list  INTEGER DEFAULT 0
 );
 
+-- Every change to a value, so any of it can be put back. One keystroke can
+-- touch a whole specimen event, and undo has to take the same step back.
+CREATE TABLE IF NOT EXISTS edits (
+  id       INTEGER PRIMARY KEY,
+  batch    INTEGER NOT NULL,
+  photo_id INTEGER NOT NULL,
+  field    TEXT NOT NULL,
+  was      TEXT NOT NULL DEFAULT '',
+  became   TEXT NOT NULL DEFAULT '',
+  what     TEXT NOT NULL DEFAULT '',
+  at       TEXT
+);
+CREATE INDEX IF NOT EXISTS edits_batch ON edits(batch DESC);
+
+-- A taxon list the recorder supplies. entolog ships none of its own.
+CREATE TABLE IF NOT EXISTS taxa (
+  name        TEXT PRIMARY KEY,
+  authority   TEXT DEFAULT '',
+  rank        TEXT DEFAULT '',
+  taxon_id    TEXT DEFAULT '',
+  accepted    TEXT DEFAULT '',
+  vernacular  TEXT DEFAULT '',
+  taxon_group TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS taxa_accepted ON taxa(accepted);
+CREATE INDEX IF NOT EXISTS taxa_vernacular ON taxa(vernacular);
+
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 
 CREATE TABLE IF NOT EXISTS places (
@@ -93,7 +120,8 @@ CREATE TABLE IF NOT EXISTS places (
 """
 
 # Columns added after 1.0. SQLite has no IF NOT EXISTS for ALTER, so check first.
-LATER = {"photos": {"locality": "TEXT", "locality_full": "TEXT", "gridref": "TEXT"}}
+LATER = {"photos": {"locality": "TEXT", "locality_full": "TEXT", "gridref": "TEXT",
+                    "gridref_system": "TEXT"}}
 
 
 class Connection(sqlite3.Connection):
@@ -122,17 +150,19 @@ def connect(path: str | Path) -> Connection:
 
 def _backfill(cx):
     """Work out grid references for photographs scanned before entolog could."""
-    if get_meta(cx, "gridrefs_backfilled"):
+    if get_meta(cx, "gridrefs_backfilled") == "irish-too":
         return
     from . import locality
     todo = cx.execute("SELECT id, lat, lon FROM photos WHERE lat IS NOT NULL "
-                      "AND COALESCE(gridref,'')=''").fetchall()
+                      "AND COALESCE(gridref_system,'')=''").fetchall()
     for row in todo:
-        ref = locality.osgb_gridref(row["lat"], row["lon"])
+        ref, system = locality.gridref(row["lat"], row["lon"],
+                                       system=get_meta(cx, "grid") or "auto")
         if ref:
-            cx.execute("UPDATE photos SET gridref=? WHERE id=?", (ref, row["id"]))
+            cx.execute("UPDATE photos SET gridref=?, gridref_system=? WHERE id=?",
+                       (ref, system, row["id"]))
     cx.commit()
-    set_meta(cx, "gridrefs_backfilled", len(todo))
+    set_meta(cx, "gridrefs_backfilled", "irish-too")
 
 
 def _carry_over(cx):

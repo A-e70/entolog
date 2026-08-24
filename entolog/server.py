@@ -208,8 +208,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"id": row["id"], "filename": row["filename"],
                                "line": entry.status_line(cx, P.active(cx), row)})
         if path == "/api/suggest":
-            return self._json(records.suggest(cx, qs.get("field", [""])[0],
-                                              qs.get("q", [""])[0]))
+            field = qs.get("field", [""])[0]
+            return self._json(records.suggest(
+                cx, field, qs.get("q", [""])[0],
+                taxa=field == P.active(cx)["primary"]))
         m = re.fullmatch(r"/img/(\d+)", path)
         if m:
             row = cx.execute("SELECT * FROM photos WHERE id=?", (int(m.group(1)),)).fetchone()
@@ -265,6 +267,9 @@ class Handler(BaseHTTPRequestHandler):
             except LookupError as e:
                 return self._send(404, str(e), "text/plain")
             return self._json({"id": row["id"], "filename": row["filename"]})
+        if u.path == "/api/undo":
+            done = records.undo(cx, int(body.get("times", 1)))
+            return self._json({"undone": done, **records.counts(cx, P.active(cx))})
         if u.path == "/api/meta":
             for k, v in body.items():
                 db.set_meta(cx, k, v)

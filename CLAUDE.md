@@ -28,7 +28,8 @@ specimen events (150 s, 60 m). `server.py` is a `ThreadingHTTPServer` serving
 the profile, and builds the Darwin Core Archive. `locality.py` shortens a verbose
 reverse geocode and computes OSGB grid references offline. `entry.py` is the
 terminal loop, the status line and the viewer hooks; `tsvedit.py` is the editable
-table; `check.py` is the record cleaning pass;
+table; `check.py` is the record cleaning pass; `taxonomy.py` holds the taxon list the
+recorder supplies and `clock.py` measures the camera against the satellites;
 `records.suggest` is the one place suggestions are ranked, used by the window and
 by `entry.resolve`, so both offer the same list; `demo.py` and `demodata.py` build
 the demo folder using `exifwrite.py`, the only place EXIF is ever written.
@@ -45,7 +46,7 @@ keyboard shortcuts and its help from `/api/state`. It reads itself through
 
 ## Before claiming it works
 
-`python3 -m unittest discover -s tests` is 202 tests: EXIF parsing, hemisphere
+`python3 -m unittest discover -s tests` is 256 tests: EXIF parsing, hemisphere
 signs, grouping, moved files, profile validation, custom fields the code has
 never seen, the 1.0 migration and every export format. They build their own
 JPEGs, so no camera and no Pillow.

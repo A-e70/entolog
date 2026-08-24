@@ -43,17 +43,20 @@ group a burst of shots into one specimen, autocomplete a name you typed last
 week, or tell you that the camera clock was reset. That is the whole of what
 entolog adds.
 
-**NBN Record Cleaner** checks a finished spreadsheet against verification rules.
-`entolog check` is a smaller thing run earlier: the problems it can see without a
-taxonomy, while the photographs are still in front of you.
+**NBN Record Cleaner** checks a finished spreadsheet against verification rules,
+which are a body of expert knowledge entolog has no equivalent of. `entolog
+check` is a smaller thing run earlier: the faults that are visible from the
+photographs and your own taxon list, while the photographs are still in front of
+you.
 
 ## What entolog does not do
 
 - **It does not identify anything.** There is no image recognition and no
   suggestion of names. It records what you determine.
-- **It does not check names against a taxonomy.** No UKSI, no GBIF backbone, no
-  taxon version keys. It will remember exactly what you type and warn you when
-  you have typed it two ways.
+- **It ships no taxonomy of its own.** Load the taxon list you are entitled to
+  use and entolog will check names against it, carry its identifiers into every
+  export, and tell you when a record is filed under a synonym. It will not fetch
+  a backbone for you and it will never rewrite a name you typed.
 - **It does not store or publish records anywhere.** No account, no server, no
   sync. One SQLite file next to your photographs.
 - **It does not do verification workflows.** No comments, no reviewers, no
@@ -72,4 +75,4 @@ The things that usually matter for evaluation:
   with exactly the fields it wants back.
 - Nothing leaves the machine unless the recorder runs `entolog locality lookup`,
   which is the only command that touches the network.
-- 168 tests, run with `python3 -m unittest discover -s tests`, no network needed.
+- 256 tests, run with `python3 -m unittest discover -s tests`, no network needed.

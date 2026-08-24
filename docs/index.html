@@ -96,7 +96,7 @@ footer a{color:var(--dim)}
       <a class="btn" href="https://github.com/A-e70/entolog/blob/main/docs/quickstart.md">Quick start</a>
     </div>
     <p class="facts"><b>MIT licensed</b> · <b>no dependencies</b> ·
-      <b>202 tests</b> · Python 3.9 or newer · nothing is uploaded</p>
+      <b>256 tests</b> · Python 3.9 or newer · nothing is uploaded</p>
   </div>
 </header>
 
@@ -243,7 +243,42 @@ entolog record - "vecr / adult"</pre>
         <li><b>The same list in the terminal</b>, where an abbreviation resolves
           only when one thing could have been meant, and shows the choices when
           more than one could.</li>
+        <li><b>Your taxon list too</b>, with the common name beside each entry and
+          a synonym marked as what it is.</li>
       </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>A record is its name, its date and its position</h2>
+    <p class="lede">entolog checks all three against something better than
+      memory, and never rewrites what you typed.</p>
+    <div class="cols">
+      <div class="card">
+        <h3>Names</h3>
+        <p>Bring the taxon list you are entitled to use. Names then carry its
+          identifier, a Taxon Version Key or whatever the list holds, into every
+          export. A synonym is offered as one and reported, never replaced.</p>
+        <pre>entolog taxa import uksi.csv</pre>
+      </div>
+      <div class="card">
+        <h3>Dates</h3>
+        <p>Where the camera saved a GPS fix it saved the satellite time too.
+          Which part of the difference is a time zone is not in the file, so both
+          readings are offered rather than one guessed.</p>
+        <pre>the camera reads +1h47m against UTC
+in a +1h zone the clock is 47m fast
+in a +2h zone the clock is 13m slow</pre>
+      </div>
+      <div class="card">
+        <h3>Positions</h3>
+        <p>British and Irish grids, chosen by where the photograph was taken. Any
+          record can be published as the square it falls in, which matters for a
+          rare species and for a photograph taken in your own garden.</p>
+        <pre>entolog set blur 1km</pre>
+      </div>
     </div>
   </div>
 </section>
@@ -313,6 +348,9 @@ entolog export -f tsv     -o records.tsv</pre>
         Ordnance Survey test point, TG 51409 13177.</li>
       <li><b>Switching profile</b> never deletes a value, and refuses to orphan a
         field that holds records unless you insist.</li>
+      <li><b>Every change can be taken back.</b> One keystroke that records a
+        whole specimen event is one step back, in the window, the terminal or the
+        command line.</li>
     </ul>
   </div>
 </section>
@@ -340,6 +378,8 @@ entolog export -f tsv     -o records.tsv</pre>
         <span>Which format which scheme wants</span></a>
       <a href="https://github.com/A-e70/entolog/blob/main/docs/viewers.md">Image viewers
         <span>feh, nsxiv, geeqie and anything else</span></a>
+      <a href="https://github.com/A-e70/entolog/blob/main/docs/records.md">Getting a record right
+        <span>Names, dates, positions, undo, backup</span></a>
       <a href="https://github.com/A-e70/entolog/blob/main/docs/comparison.md">Where entolog fits
         <span>Honestly, next to what already exists</span></a>
       <a href="https://github.com/A-e70/entolog/blob/main/docs/organisations.md">For organisations

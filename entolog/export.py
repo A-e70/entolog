@@ -10,7 +10,9 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 
+from . import locality
 from . import profile as P
+from . import taxonomy
 from . import records
 
 # GBIF will not register a dataset unless the licence is one of these three.
@@ -29,8 +31,13 @@ DWC_PHOTO = [
     ("minimumElevationInMeters", "altitude_m"), ("locality", "locality"),
     ("verbatimCoordinates", "gridref"), ("recordedBy", "recorded_by"),
     ("associatedMedia", "filename"), ("recordNumber", "record_number"),
-    ("occurrenceStatus", "status"),
+    ("occurrenceStatus", "status"), ("informationWithheld", "information_withheld"),
+    ("verbatimCoordinateSystem", "grid_system"),
 ]
+
+# Only written when the recorder has loaded a taxon list.
+DWC_TAXON = [("taxonID", "taxon_id"), ("scientificNameAuthorship", "authority"),
+             ("taxonRank", "taxon_rank"), ("acceptedNameUsage", "accepted_name")]
 
 # iRecord takes any headings and asks you to map them, but these are the labels
 # it offers, so a file using them maps itself.
@@ -40,20 +47,34 @@ IRECORD = [
     ("Recorder Name", "recorded_by"), ("Identified By", "recorded_by"),
     ("Quantity", None), ("Stage", None), ("Sex", None),
     ("Occurrence comment", None), ("Recorder certainty", None),
+    ("Sensitivity precision", "sensitivity"), ("Taxon Version Key", "taxon_id"),
 ]
 
 
-def photo_part(r, recorder="") -> dict:
+def photo_part(r, recorder="", precision="") -> dict:
+    """One photograph's own columns. A record marked sensitive, or a whole
+    dataset told to be coarse, is published as the grid square it falls in and
+    the middle of that square, never as the position in the file."""
     taken = r["taken_at"] or ""
     date, _, time = taken.partition("T")
     lat, lon = r["lat"], r["lon"]
     rel = r["rel_path"] or ""
+    ref, withheld, uncertainty = r["gridref"] or "", "", r.get("gps_accuracy_m")
+    if precision and lat is not None:
+        lat, lon, ref, uncertainty = locality.blur_position(
+            lat, lon, precision, r["gridref_system"] or "auto")
+        withheld = f"coordinates given as the {precision} square they fall in"
+    elif precision and ref:
+        ref = locality.blur(ref, precision)
+        withheld = f"grid reference given to {precision}"
     return {
         "filename": r["filename"], "date": date, "time": time[:8], "datetime": taken,
         "latitude": lat, "longitude": lon,
         "position": f"{lat:.6f}, {lon:.6f}" if lat is not None and lon is not None else "",
-        "locality": r["locality"] or "", "gridref": r["gridref"] or "",
-        "altitude_m": r["altitude"], "coord_uncertainty_m": r.get("gps_accuracy_m"),
+        "locality": r["locality"] or "", "gridref": ref,
+        "grid_system": r["gridref_system"] or "",
+        "altitude_m": r["altitude"], "coord_uncertainty_m": uncertainty,
+        "precision": precision or "exact", "information_withheld": withheld,
         "group": r["group_id"], "date_source": r["taken_source"],
         "camera": r["camera"] or "", "lens": r["lens"] or "",
         "folder": rel.rsplit("/", 1)[0] if "/" in rel else "",
@@ -62,8 +83,9 @@ def photo_part(r, recorder="") -> dict:
         "basis": "HumanObservation", "datum": "WGS84" if lat is not None else "",
         "recorded_by": recorder, "status": "present",
         "date_uk": f"{date[8:10]}/{date[5:7]}/{date[0:4]}" if len(date) == 10 else "",
-        "spatial_ref": (r["gridref"] or
-                        (f"{lat:.5f}, {lon:.5f}" if lat is not None else "")),
+        "spatial_ref": ref or (f"{lat:.5f}, {lon:.5f}" if lat is not None else ""),
+        "sensitivity": (locality.PRECISION_METRES.get(precision, "")
+                        if precision else ""),
     }
 
 
@@ -87,14 +109,25 @@ def dataset_id(cx) -> str:
 def rows(cx, prof=None, only_determined=True):
     prof = prof or P.active(cx)
     recorder = setting(cx, "recorded_by", "")
+    default_blur = setting(cx, "blur", "")
     dsid = dataset_id(cx)
+    primary, taxon_cache = prof["primary"], {}
     for r in records.list_photos(cx, prof, "done" if only_determined else "all",
                                  limit=10 ** 9):
-        d = photo_part(r, recorder)
+        d = photo_part(r, recorder, r["precision"] or default_blur)
         d["occurrence_id"] = f"urn:entolog:{dsid}:{r['fingerprint']}"
         for f in prof["fields"]:
             d[f["name"]] = r["values"].get(f["name"], "")
         d["flagged"] = r["flagged"]
+        name = r["values"].get(primary, "")
+        if name:
+            if name not in taxon_cache:
+                taxon_cache[name] = taxonomy.lookup(cx, name) or {}
+            t = taxon_cache[name]
+            d["taxon_id"] = t.get("taxon_id", "")
+            d["authority"] = t.get("authority", "")
+            d["taxon_rank"] = t.get("rank", "")
+            d["accepted_name"] = t.get("accepted", "")
         yield d
 
 
@@ -106,9 +139,9 @@ def _delim(out, data, columns, delim=","):
         w.writerow({k: ("" if d.get(k) is None else d.get(k)) for k in columns})
 
 
-def dwc_columns(prof) -> list:
+def dwc_columns(prof, with_taxa=False) -> list:
     """(term, source key) pairs: the photograph's terms, then the profile's."""
-    cols = list(DWC_PHOTO)
+    cols = list(DWC_PHOTO) + (list(DWC_TAXON) if with_taxa else [])
     seen = {t for t, _ in cols}
     for f in prof["fields"]:
         term = f.get("dwc")
@@ -145,7 +178,7 @@ def render(cx, fmt="csv", columns=None, only_determined=True, prof=None) -> str:
         cols = columns or (list(P.PHOTO_FIELDS) + P.names(prof) + ["flagged"])
         _delim(out, data, cols)
     elif fmt == "dwc":
-        pairs = dwc_columns(prof)
+        pairs = dwc_columns(prof, with_taxa=taxonomy.count(cx) > 0)
         mapped = [{t: (1 if s == "_one" else d.get(s, "")) for t, s in pairs} for d in data]
         _delim(out, mapped, [t for t, _ in pairs])
     elif fmt == "irecord":
@@ -231,7 +264,7 @@ def dwca(cx, prof=None, only_determined=True) -> bytes:
     take, and it is a zip so it goes in one piece."""
     prof = prof or P.active(cx)
     dsid = dataset_id(cx)
-    pairs = dwc_columns(prof)
+    pairs = dwc_columns(prof, with_taxa=taxonomy.count(cx) > 0)
     body = render(cx, "dwc", only_determined=only_determined, prof=prof)
     fields = "\n".join(
         f'    <field index="{i}" term="http://rs.tdwg.org/dwc/terms/{term}" />'

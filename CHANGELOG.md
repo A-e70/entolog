@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.4.0
+
+Five things stood between entolog and a record a scheme can use without touching.
+
+**Names carry an identifier.** entolog ships no taxonomy, because the UK Species
+Inventory, a GBIF extract and a scheme's own checklist all have their own terms
+of use. Bring the list you are entitled to and `entolog taxa import` reads
+whatever columns it has, matching the usual headings on its own. From then on
+suggestions come from it, a synonym is offered as what it is, `taxonID`,
+`scientificNameAuthorship`, `taxonRank` and `acceptedNameUsage` follow every
+record into the archive, the iRecord export gains a Taxon Version Key column, and
+`entolog check` reports names the list does not have. Nothing typed is ever
+rewritten.
+
+**The camera clock can be measured and corrected.** `entolog time` compares the
+camera against the satellite time the camera itself recorded. Which part of the
+difference is a time zone is not in the file, so both readings are offered rather
+than one guessed. `--from-gps --zone +1h`, `--set 'IMG_0001.jpg=...'` or
+`--shift +3h12m` apply it, corrected dates are marked as corrected, specimen
+events regroup, and the opposite shift puts it back.
+
+**Positions outside Britain, and positions that should not be published.** The
+Irish grid is calculated as exactly as the British one, and entolog picks the
+grid by where the photograph was taken. Any record can be published as the square
+it falls in instead of the point, at 100 m, 1 km, 2 km, 10 km or 100 km, with the
+exported position at the centre of that same square, `coordinateUncertaintyInMeters`
+and `informationWithheld` to match, and iRecord's `Sensitivity precision` filled
+in. This matters for a rare species and equally for a photograph taken in your own
+garden.
+
+**Everything can be taken back.** `entolog undo`, `Ctrl+Z` in the window, `:u` in
+the terminal. One keystroke that records a whole specimen event is one step back,
+and so is a whole table read in from `$EDITOR`.
+
+**The record can be copied somewhere safe.** `entolog backup`.
+
+Also: a card of several thousand photographs draws only the tiles on screen.
+Fixed a keyboard handler that used a variable before it was declared, which broke
+every shortcut in the window; found in a browser, which is the only place it
+could have been found.
+
+256 tests.
+
 ## 1.3.0
 
 **Suggestions, from your own records.** Any field that learns now offers what is

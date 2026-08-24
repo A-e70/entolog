@@ -7,7 +7,7 @@ decide on, from the window, the terminal, or the image viewer you already use.
 
 ![The entolog window](docs/img/window-insects.png)
 
-MIT licensed · no dependencies · 202 tests · one file to download · nothing leaves your machine
+MIT licensed · no dependencies · 256 tests · one file to download · nothing leaves your machine
 
 ## The problem
 
@@ -113,7 +113,8 @@ the only thing it can mean.
 
 Nothing you type is ever replaced unless you choose a suggestion. The line under
 the list says so while you type, and pressing Enter without choosing keeps
-exactly what you wrote.
+exactly what you wrote. Load your own taxon list and the suggestions come from
+that too, marking a synonym as what it is.
 
 ### The terminal
 
@@ -183,6 +184,67 @@ Columns are matched by name, so delete columns, reorder them, sort the rows, or
 cut it down to `id` and one field. Deleting a row does not delete the record. A
 value that fails a check is reported by line number and still kept.
 `entolog table` and `entolog apply` do the two halves separately.
+
+## Names, dates and positions
+
+Three things decide whether a record is usable, and entolog can check all three
+against something better than memory. In full in
+[docs/records.md](docs/records.md).
+
+**Names.** entolog ships no taxonomy. Load the list you are entitled to use, and
+names carry its identifier into every export:
+
+```bash
+entolog taxa import uksi.csv
+```
+
+`taxonID`, `scientificNameAuthorship`, `taxonRank` and `acceptedNameUsage` follow
+each record into the Darwin Core Archive, and the iRecord export gains a Taxon
+Version Key column. A name the list calls a synonym is offered as one, recorded
+as you typed it, and reported by `entolog check`.
+
+**Dates.** A camera clock that was never set is the commonest fault in a set of
+photographic records. Where the camera saved a GPS fix it also saved the
+satellite time, which is right by definition:
+
+```
+$ entolog time
+20 photographs carry a satellite fix as well as a camera time.
+  the camera reads +1h47m against UTC
+  in a +1h zone the clock is 47m fast
+  in a +2h zone the clock is 13m slow
+
+Correct it with the zone you were in:
+  entolog time --from-gps --zone +1h
+```
+
+Which part of that is the time zone is not in the file, so entolog offers both
+readings rather than picking one and being quietly wrong. Corrected dates are
+marked as corrected, and the opposite shift puts them back.
+
+**Positions.** Britain gets the Ordnance Survey grid, Ireland gets the Irish
+grid, chosen by where the photograph was taken. The EXIF position of a photograph
+taken in your garden is your home address, and a record of a sensitive species is
+a map to it, so any record can be published as the square it falls in instead:
+
+```bash
+entolog record IMG_0421.jpg --precision 1km    # this record
+entolog set blur 1km                           # everything, by default
+```
+
+The exported position is then the centre of the square the reference names, with
+`coordinateUncertaintyInMeters` and `informationWithheld` to match. The exact
+position never leaves your database.
+
+## Taking it back, and keeping it
+
+```bash
+entolog undo          # Ctrl+Z in the window, :u in the terminal
+entolog backup        # the database is the record. Copy it somewhere
+```
+
+One keystroke that records a whole specimen event is one step back. So is a whole
+table read in from `$EDITOR`.
 
 ## Check before you send
 
@@ -256,8 +318,8 @@ than wrong.
 
 ## What it does not do
 
-It does not identify anything: there is no image recognition. It does not check
-names against a taxonomy. It does not store or publish records anywhere, and has
+It does not identify anything: there is no image recognition. It ships no
+taxonomy of its own, though it will use the one you bring. It does not store or publish records anywhere, and has
 no account and no server. It is not a photo manager and never writes to your
 images. See [docs/comparison.md](docs/comparison.md) for how it sits alongside
 iRecord, iNaturalist, MapMate and a spreadsheet.
@@ -311,6 +373,7 @@ what this machine has.
 - [Profiles](docs/profiles.md), deciding what a record contains
 - [Exports](docs/exports.md), which format which scheme wants
 - [Image viewers](docs/viewers.md), feh, nsxiv, geeqie and anything else
+- [Getting a record right](docs/records.md), names, dates, positions, undo, backup
 - [Where entolog fits](docs/comparison.md), honestly, next to what already exists
 - [For organisations](docs/organisations.md), deployment, scheme profiles, data licensing and what stays local
 - [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
@@ -324,6 +387,8 @@ entolog/records.py    reading and writing the recorder's own fields
 entolog/entry.py      the terminal loop, the status line, the viewer hooks
 entolog/tsvedit.py    the table as a file you can edit and read back
 entolog/check.py      the record cleaning pass
+entolog/taxonomy.py   the taxon list you supply, and the identifiers it carries
+entolog/clock.py      measuring and correcting the camera clock
 entolog/exifread.py   EXIF out of JPEG, TIFF raws, PNG, WebP. No dependencies
 entolog/locality.py   short locality from a verbose lookup, OSGB grid references
 entolog/scan.py       folder to database, fingerprints, specimen events
@@ -336,7 +401,7 @@ Everything lives in one SQLite file next to the photographs, `entolog.db`. It is
 the record, so back it up with them.
 
 ```bash
-python3 -m unittest discover -s tests      # 202 tests, no network, no camera
+python3 -m unittest discover -s tests      # 256 tests, no network, no camera
 ./build.sh                                 # dist/entolog.pyz, one file
 ```
 

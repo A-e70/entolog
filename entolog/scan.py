@@ -10,7 +10,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from . import exifread, locality
+from . import db, exifread, locality
 
 IMAGE_EXT = {
     ".jpg", ".jpeg", ".jpe", ".png", ".tif", ".tiff", ".webp", ".heic", ".heif",
@@ -75,6 +75,7 @@ def regroup(cx, gap_seconds: int = 150, move_metres: float = 60.0) -> int:
 
 def scan(cx, roots, recursive=True, gap_seconds=150, progress=None) -> dict:
     added = updated = moved = skipped = 0
+    grid = db.get_meta(cx, "grid") or "auto"
     seen_paths = set()
     for root in roots:
         root = Path(root).expanduser().resolve()
@@ -94,6 +95,8 @@ def scan(cx, roots, recursive=True, gap_seconds=150, progress=None) -> dict:
                 continue
             fp = fingerprint(f, st.st_size)
             ex = exifread.read(f)
+            ref = (locality.gridref(ex["lat"], ex["lon"], system=grid)
+                   if ex.get("lat") is not None else ("", ""))
             taken = ex.get("datetime_original")
             source = "exif"
             if not taken:  # no EXIF date: file mtime, marked as such so it is auditable
@@ -110,8 +113,7 @@ def scan(cx, roots, recursive=True, gap_seconds=150, progress=None) -> dict:
                 lens=ex.get("lens"), width=ex.get("width"), height=ex.get("height"),
                 thumb_offset=ex.get("thumb_offset"), thumb_length=ex.get("thumb_length"),
                 exif=json.dumps(ex, default=str),
-                gridref=(locality.osgb_gridref(ex["lat"], ex["lon"])
-                         if ex.get("lat") is not None else None),
+                gridref=ref[0] or None, gridref_system=ref[1] or None,
             )
             cols = ",".join(vals)
             cx.execute(

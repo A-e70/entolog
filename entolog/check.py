@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta
 
-from . import records
+from . import records, taxonomy
 from . import profile as P
 
 ERROR, WARNING, NOTE = "error", "warning", "note"
@@ -129,7 +129,10 @@ def run(cx, prof=None) -> list:
                     f"{groups[a][0]!r} and {groups[b][0]!r} differ by one letter", rows,
                     "One of them may be a typo. Both may also be real")
 
+    has_taxa = taxonomy.count(cx) > 0
     for f in prof["fields"]:
+        if has_taxa and f["name"] == primary:
+            continue                 # the taxon list is the authority for names
         listed = {r["value"] for r in cx.execute(
             "SELECT value FROM terms WHERE field=? AND from_list=1", (f["name"],))}
         if not listed:
@@ -142,6 +145,28 @@ def run(cx, prof=None) -> list:
                 f"{len(off)} records have a {f['label']} that is not in your checklist: "
                 + ", ".join(repr(n) for n in names[:6])
                 + (f" and {len(names) - 6} more" if len(names) > 6 else ""), off)
+
+    if taxonomy.count(cx):
+        unknown, synonyms = [], {}
+        for p in recorded:
+            name = p["values"].get(primary, "")
+            got = taxonomy.lookup(cx, name)
+            if got is None:
+                unknown.append(p)
+            elif got["accepted"]:
+                synonyms.setdefault((name, got["accepted"]), []).append(p)
+        if unknown:
+            names = sorted({p["values"][primary] for p in unknown})
+            add(WARNING, "not-in-taxon-list",
+                f"{len(unknown)} records use a name your taxon list does not have: "
+                + ", ".join(repr(n) for n in names[:6])
+                + (f" and {len(names) - 6} more" if len(names) > 6 else ""), unknown,
+                "A scheme will have to match these by hand, or send them back")
+        for (name, accepted), rows in synonyms.items():
+            add(WARNING, "recorded-under-a-synonym",
+                f"{len(rows)} records are under {name!r}, which your list calls a "
+                f"synonym of {accepted!r}", rows,
+                "Both names export, with acceptedNameUsage saying which is which")
 
     # --- worth a look -----------------------------------------------------
     if from_file:

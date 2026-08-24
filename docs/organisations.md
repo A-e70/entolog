@@ -47,6 +47,26 @@ Hand that file to your recorders alongside the program and the records arrive in
 the shape your database expects. See
 [profiles.md](profiles.md) for the full reference.
 
+## Names and identifiers
+
+entolog ships no taxonomy. A scheme can hand its recorders the list it wants used
+along with the profile, and from then on every record carries that list's
+identifier, which for the UK Species Inventory is the Taxon Version Key. Names
+the list does not have, and records filed under a synonym, are reported to the
+recorder before anything is sent. entolog never rewrites a name.
+
+## Sensitive records
+
+Any record can be published as the square it falls in rather than the point:
+100 m, 1 km, 2 km, 10 km or 100 km, the resolutions the atlases support. A whole
+dataset can be set to a default. The exported position is the centre of the
+square the reference names, with `coordinateUncertaintyInMeters` and
+`informationWithheld` to match, and iRecord's `Sensitivity precision` filled in.
+The exact position stays in the recorder's own database.
+
+This also covers the ordinary case that has nothing to do with rare species: a
+photograph taken in someone's garden carries their home address in its EXIF.
+
 ## Data licensing
 
 The archive export carries a licence, and entolog accepts only the three that
@@ -128,6 +148,7 @@ saved them anything.
   GBIF backbone or anything else, and no taxon version keys are produced. It
   remembers what the recorder types and reports when they have typed it two ways.
 - **No verification workflow.** No reviewers, no statuses, no comments.
+- **No image recognition**, and no taxonomy of its own.
 - **No hosting, no sharing, no multi-user access.** One recorder, one folder.
 - **Not a photo manager.** It never writes to an image file.
 
@@ -144,7 +165,7 @@ That writes a folder of demo photographs with real EXIF, reads them and opens th
 window. Nothing is installed and nothing is uploaded.
 
 - Source: [github.com/A-e70/entolog](https://github.com/A-e70/entolog)
-- 168 tests, run with `python3 -m unittest discover -s tests`, no network needed
+- 256 tests, run with `python3 -m unittest discover -s tests`, no network needed
 - Continuous integration across Python 3.9 to 3.14 on Linux, macOS and Windows
 - MIT licensed, and every published version stays that way
 

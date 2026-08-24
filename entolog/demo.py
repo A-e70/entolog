@@ -35,6 +35,12 @@ CHECKLIST = [
 ]
 
 
+# The demo card has the fault a real one usually has: the camera clock is
+# running fast, and the satellites know it.
+CLOCK_ERROR = timedelta(minutes=47)
+TIME_ZONE = timedelta(hours=1)          # a British summer morning
+
+
 def build(folder, events=9, seed=7, start_time=None) -> dict:
     """Write the demo photographs. Returns what was made."""
     folder = Path(folder).expanduser()
@@ -55,7 +61,8 @@ def build(folder, events=9, seed=7, start_time=None) -> dict:
                 demodata.IMAGES[n % len(demodata.IMAGES)],
                 dt=when.strftime("%Y:%m:%d %H:%M:%S"), lat=lat, lon=lon,
                 lat_ref="N", lon_ref="W" if lon < 0 else "E",
-                model="entolog demo", width=400, height=300))
+                model="entolog demo", width=400, height=300,
+                gps_utc=when - TIME_ZONE - CLOCK_ERROR))
             made.append(path)
     # One photograph with no position and no date, because a real card has one.
     odd = folder / "IMG_9999.jpg"

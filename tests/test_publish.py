@@ -111,7 +111,8 @@ class IRecord(Base):
         head = export.render(self.cx, "irecord").splitlines()[0]
         self.assertEqual(head, "Species or taxon name,Date,Spatial reference,"
                                "Location name,Recorder Name,Identified By,Quantity,"
-                               "Stage,Sex,Occurrence comment,Recorder certainty")
+                               "Stage,Sex,Occurrence comment,Recorder certainty,"
+                               "Sensitivity precision,Taxon Version Key")
 
     def test_the_date_is_written_the_way_a_uk_form_expects(self):
         row = export.render(self.cx, "irecord").splitlines()[1]

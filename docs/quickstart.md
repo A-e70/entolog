@@ -75,6 +75,16 @@ The licence has to be `CC0`, `CC-BY` or `CC-BY-NC`. GBIF will not register a
 dataset under anything else, and a licence that forbids commercial use stops some
 local record centres using your records at all, so choose deliberately.
 
+## 4b. Get the names, dates and positions right
+
+```bash
+entolog taxa import uksi.csv    # your own taxon list, so names carry an identifier
+entolog time                    # is the camera clock right? Measured against the GPS
+entolog set blur 1km            # publish squares rather than points, if you want to
+```
+
+All three are optional and all three are explained in [records.md](records.md).
+
 ## 5. Check before you send
 
 ```bash

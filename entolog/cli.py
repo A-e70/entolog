@@ -8,8 +8,8 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import __version__, check as checkmod, db, demo as demomod, entry, export
-from . import locality, records
+from . import __version__, check as checkmod, clock, db, demo as demomod, entry, export
+from . import locality, records, taxonomy
 from . import scan as scanmod, server, tsvedit
 from . import profile as P
 
@@ -112,6 +112,187 @@ def cmd_terms(args) -> int:
     return 0
 
 
+def cmd_backup(args) -> int:
+    cx, _prof = _open(args)
+    source = _db_for(args)
+    out = Path(args.out).expanduser() if args.out else source.with_name(
+        source.stem + "-backup" + source.suffix)
+    if out.exists() and not args.force:
+        print(f"{out} is already there. Pass --force to replace it.", file=sys.stderr)
+        return 1
+    try:
+        with db.connect(out) as copy:
+            cx.backup(copy)
+    except (OSError, sqlite3.Error) as e:
+        print(f"could not write {out}: {e}", file=sys.stderr)
+        return 1
+    size = out.stat().st_size
+    print(f"copied {source} to {out} ({size // 1024} KB)")
+    print("That file is the records. Keep it with the photographs.")
+    return 0
+
+
+def cmd_undo(args) -> int:
+    cx, _prof = _open(args)
+    if args.list:
+        pending = records.pending_undo(cx)
+        print(f"next undo puts back {pending['photos']} photographs: {pending['what']}"
+              if pending else "nothing to undo")
+        return 0
+    done = records.undo(cx, args.times)
+    if not done:
+        print("nothing to undo")
+        return 0
+    for step in done:
+        print(f"put back {step['photos']} photograph"
+              f"{'s' if step['photos'] != 1 else ''}: {step['what']}")
+    return 0
+
+
+def cmd_time(args) -> int:
+    cx, prof = _open(args)
+    seconds = None
+    if args.shift:
+        try:
+            seconds = clock.parse_shift(args.shift)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+    elif args.set:
+        target, _, when = args.set.partition("=")
+        try:
+            seconds = clock.offset_to(cx, entry.find(cx, target.strip()), when)
+        except (LookupError, ValueError) as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print(f"{target.strip()} is out by {clock.describe(seconds)}")
+    elif args.from_gps:
+        m = clock.against_gps(cx)
+        if not m["photos"]:
+            print("no photograph has both a camera time and a satellite fix, so "
+                  "there is nothing to measure against.", file=sys.stderr)
+            return 1
+        try:
+            zone = clock.zone_seconds(args.zone) if args.zone else m["nearest"]
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        if not args.zone:
+            print(f"assuming the time zone was {clock.describe(m['nearest'])}. "
+                  f"Pass --zone to say otherwise.")
+        seconds = -int(m["median"] - zone)
+        if abs(seconds) < 2:
+            print("the camera clock agrees with the satellites. Nothing to do.")
+            return 0
+    if seconds is None:
+        m = clock.against_gps(cx)
+        rows = cx.execute("SELECT taken_source, COUNT(*) c FROM photos "
+                          "GROUP BY taken_source").fetchall()
+        for row in rows:
+            print(f"  {row['c']:>5}  {row['taken_source']}")
+        if m["photos"]:
+            print(f"\n{m['photos']} photographs carry a satellite fix as well as a "
+                  f"camera time.")
+            print(f"  the camera reads {clock.describe(m['median'])} against UTC")
+            if m["spread"] > 120:
+                print(f"  but not consistently: the difference varies by "
+                      f"{clock.describe(m['spread'])}, so the clock may have been "
+                      f"reset partway through")
+            # Which part of that is the time zone is not in the file.
+            for zone in m["zones"]:
+                out = m["median"] - zone
+                if abs(out) < 2:
+                    print(f"  in a {clock.describe(zone)} zone the clock is right")
+                else:
+                    fast = "fast" if out > 0 else "slow"
+                    print(f"  in a {clock.describe(zone)} zone the clock is "
+                          f"{clock.describe(abs(out))[1:]} {fast}")
+            print(f"\nCorrect it with the zone you were in:")
+            print(f"  entolog time --from-gps --zone "
+                  f"{clock.describe(m['zones'][0])}")
+        else:
+            print("\nNo photograph carries both a camera time and a satellite fix.")
+            print("If you know what one photograph should say:")
+            print("  entolog time --set 'IMG_0001.jpg=2026-06-14 09:26'")
+        for past in clock.json_history(cx):
+            print(f"already applied: {clock.describe(past['seconds'])} to "
+                  f"{past['photos']} photographs")
+        return 0
+
+    if not args.yes:
+        n = cx.execute("SELECT COUNT(*) c FROM photos WHERE taken_source LIKE 'exif%'"
+                       if not args.all else "SELECT COUNT(*) c FROM photos").fetchone()["c"]
+        print(f"about to move {n} photographs by {clock.describe(seconds)}")
+        print("nothing is written to the photographs themselves, and the same "
+              "command with the opposite sign undoes it.")
+        try:
+            if input("go ahead? [y/N] ").strip().lower() not in ("y", "yes"):
+                print("left alone")
+                return 0
+        except EOFError:
+            print("left alone")
+            return 0
+    result = clock.shift(cx, seconds, only_exif=not args.all)
+    print(f"moved {result['photos']} photographs by {clock.describe(seconds)}, "
+          f"{result['groups']} specimen events after regrouping")
+    print(f"to undo: entolog time --shift {clock.describe(-seconds)} --yes")
+    return 0
+
+
+def cmd_taxa(args) -> int:
+    cx, prof = _open(args)
+    if args.action == "show":
+        n = taxonomy.count(cx)
+        if not n:
+            print("no taxon list loaded. entolog ships none: bring the one you are "
+                  "entitled to use.\n  entolog taxa import uksi.csv")
+            return 0
+        syn = cx.execute("SELECT COUNT(*) c FROM taxa WHERE accepted!=''").fetchone()["c"]
+        with_id = cx.execute("SELECT COUNT(*) c FROM taxa WHERE taxon_id!=''").fetchone()["c"]
+        print(f"{n} names, {syn} of them synonyms, {with_id} with a taxon identifier")
+        for row in cx.execute("SELECT name, authority, rank, taxon_id, accepted, "
+                              "vernacular FROM taxa ORDER BY name LIMIT 5"):
+            bits = [row["name"]]
+            if row["authority"]:
+                bits.append(row["authority"])
+            if row["vernacular"]:
+                bits.append(f"({row['vernacular']})")
+            if row["accepted"]:
+                bits.append(f"-> {row['accepted']}")
+            if row["taxon_id"]:
+                bits.append(row["taxon_id"])
+            print("  " + " ".join(bits))
+        if n > 5:
+            print(f"  and {n - 5} more")
+        return 0
+    if args.action == "clear":
+        cx.execute("DELETE FROM taxa")
+        cx.commit()
+        print("taxon list cleared. Records are untouched.")
+        return 0
+    if not args.file:
+        print("which file? entolog taxa import <file.csv>", file=sys.stderr)
+        return 1
+    text = sys.stdin.read() if args.file == "-" else \
+        Path(args.file).read_text(encoding="utf-8-sig", errors="replace")
+    result = taxonomy.load(cx, text, override=args.map, replace=not args.add)
+    if result.get("problem"):
+        print(result["problem"], file=sys.stderr)
+        if result.get("columns"):
+            print("understood: " + ", ".join(f"{k}={v}" for k, v in
+                                             result["columns"].items()), file=sys.stderr)
+        return 1
+    print(f"{result['names']} names loaded"
+          + (f", {result['synonyms']} of them synonyms" if result["synonyms"] else ""))
+    print("columns read: " + ", ".join(f"{k} from {v!r}"
+                                       for k, v in result["columns"].items()))
+    missing = [k for k in ("taxon_id", "vernacular", "accepted") if k not in result["columns"]]
+    if missing:
+        print("not in this file: " + ", ".join(missing)
+              + ". Pass --map name=column to point at a column entolog missed.")
+    return 0
+
+
 def cmd_profile(args) -> int:
     dbpath = _db_for(args)
     if args.action == "list":
@@ -163,6 +344,9 @@ SETTINGS = {
     "contact_email": "a contact address in the archive metadata",
     "abstract": "one paragraph about the dataset",
     "status_format": "the status line an image viewer shows",
+    "blur": "publish every position as a square this size, unless a record says "
+            "otherwise: 100m, 1km, 2km, 10km, 100km",
+    "grid": "which grid reference system to use: auto, osgb, irish",
 }
 
 
@@ -172,6 +356,13 @@ def cmd_set(args) -> int:
         for k, why in SETTINGS.items():
             print(f"  {k:15} {json.dumps(db.get_meta(cx, k, '')) :<28} {why}")
         return 0
+    if args.key == "blur" and args.value and args.value not in locality.PRECISION_METRES:
+        print("blur must be one of " + ", ".join(locality.PRECISION_METRES)
+              + ", or empty for exact positions", file=sys.stderr)
+        return 1
+    if args.key == "grid" and args.value not in ("", "auto", "osgb", "irish"):
+        print("grid must be auto, osgb or irish", file=sys.stderr)
+        return 1
     if args.key == "licence" and args.value not in export.LICENCES:
         print(f"licence must be one of {', '.join(export.LICENCES)}. "
               f"GBIF will not register a dataset under anything else.", file=sys.stderr)
@@ -246,12 +437,22 @@ def cmd_record(args) -> int:
     if photo is None:
         print("nothing is current", file=sys.stderr)
         return 1
+    if args.precision is not None:
+        _ids, errs = records.save(cx, prof, photo["id"],
+                                  {records.PRECISION: args.precision}, apply_group=not args.photo)
+        if errs:
+            print("; ".join(errs.values()), file=sys.stderr)
+            return 1
     if args.flag or args.unflag:
         records.save(cx, prof, photo["id"],
                      {records.FLAG: "1" if args.flag else ""}, apply_group=False)
         say, ids, errors = ["flagged" if args.flag else "unflagged"], [photo["id"]], {}
     elif not args.line:
-        print("give something to record, or --flag", file=sys.stderr)
+        if args.precision is not None:
+            print(entry.status_line(cx, prof, entry.find(cx, str(photo["id"])),
+                                    fmt=args.format))
+            return 0
+        print("give something to record, or --flag, or --precision", file=sys.stderr)
         return 1
     else:
         say, ids, _clean, errors = entry.record_one(
@@ -429,6 +630,8 @@ def cmd_demo(args) -> int:
     print(f"  entolog --db {dbpath} enter         the terminal")
     print(f"  entolog --db {dbpath} edit          the table in $EDITOR")
     print(f"  entolog --db {dbpath} check         the record cleaning pass")
+    print(f"  entolog --db {dbpath} time          the camera clock, which on this "
+          f"card is wrong")
     print(f"  entolog --db {dbpath} export -f dwca -o records.zip")
     print("")
     print("The pictures are drawings, not photographs. Everything else is real.")
@@ -565,6 +768,8 @@ def build_parser() -> argparse.ArgumentParser:
     rc.add_argument("target", help="path, filename, number, or - for the current one")
     rc.add_argument("line", nargs="*", help="e.g. 'Vespa crabro / adult / f / on ivy'")
     rc.add_argument("--flag", action="store_true", help="mark for a second look")
+    rc.add_argument("--precision", help="publish this record only as a square "
+                                        "this size: 100m, 1km, 2km, 10km, 100km")
     rc.add_argument("--unflag", action="store_true")
     rc.add_argument("--photo", action="store_true",
                     help="this photograph only, not the whole specimen event")
@@ -601,6 +806,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     dr = sub.add_parser("doctor", help="check this machine can run everything")
     dr.set_defaults(func=cmd_doctor)
+
+    bk = sub.add_parser("backup", help="copy the records somewhere safe")
+    bk.add_argument("out", nargs="?", help="where to write it")
+    bk.add_argument("--force", action="store_true")
+    bk.set_defaults(func=cmd_backup)
+
+    un = sub.add_parser("undo", help="put back the last change")
+    un.add_argument("-n", "--times", type=int, default=1)
+    un.add_argument("--list", action="store_true", help="say what would be put back")
+    un.set_defaults(func=cmd_undo)
+
+    tm = sub.add_parser("time", help="check or correct the camera clock")
+    tm.add_argument("--shift", help="move every date, e.g. +3h12m or -45m")
+    tm.add_argument("--set", help="'IMG_0001.jpg=2026-06-14 09:26', and everything "
+                                  "else moves by the same amount")
+    tm.add_argument("--zone", help="the time zone the camera was set to, e.g. +1h")
+    tm.add_argument("--from-gps", action="store_true",
+                    help="measure the error against the satellite clock and correct it")
+    tm.add_argument("--all", action="store_true",
+                    help="include photographs dated from the file rather than the EXIF")
+    tm.add_argument("-y", "--yes", action="store_true", help="do not ask")
+    tm.set_defaults(func=cmd_time)
+
+    tx = sub.add_parser("taxa", help="load the taxon list you are entitled to use")
+    tx.add_argument("action", choices=["import", "show", "clear"])
+    tx.add_argument("file", nargs="?", help="csv or tab separated, or - for stdin")
+    tx.add_argument("--map", help="point at columns entolog missed, "
+                                  "e.g. name=Taxon,taxon_id=TVK")
+    tx.add_argument("--add", action="store_true",
+                    help="add to the list already loaded instead of replacing it")
+    tx.set_defaults(func=cmd_taxa)
 
     lo = sub.add_parser("locality", help="turn a position into a place name")
     lo.add_argument("action", choices=["list", "import", "lookup", "shorten"])
@@ -651,10 +887,16 @@ Once a folder has been read:
 
   entolog enter                record from the keyboard, no window
   entolog edit                 the whole table in $EDITOR
+  entolog undo                 put back the last change
+
+Before you send anything:
+
+  entolog taxa import <list>   your own taxon list, so names carry an identifier
+  entolog time                 is the camera clock right? Measured against the GPS
   entolog check                the problems a recording scheme would send back
   entolog export -f dwca -o records.zip     a Darwin Core Archive
-  entolog profile list         the fields a record has, and how to change them
 
+  entolog profile list         the fields a record has, and how to change them
   entolog --help               every command
   entolog doctor               check this machine has what it needs
 """

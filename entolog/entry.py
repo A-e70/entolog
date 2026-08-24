@@ -29,6 +29,7 @@ HELP = """\
   :n 12        go to number 12                 :s show the full record
   :f todo      filter: todo all done flagged nogps
   :l [n]       the last n rows of the table    :w [file] write the table now
+  :u           undo the last change            :p 1km  publish as a square only
   :h           this help                       :q quit
 """
 
@@ -113,6 +114,7 @@ def status_line(cx, prof, photo, i=None, n=None, fmt=None) -> str:
         "event": _get(photo, "group_id"), "camera": _get(photo, "camera"),
         "record": record_summary(prof, values),
         "flag": "*" if values.get(records.FLAG) == "1" else "",
+        "precision": values.get(records.PRECISION, ""),
     }
     for f in prof["fields"]:
         fields.setdefault(f["name"], values.get(f["name"], ""))
@@ -157,13 +159,14 @@ def resolve(cx, prof, name: str, text: str):
     if not f["learn"]:
         return text, "", []
 
-    known = records.known_values(cx, name)
+    taxa = name == prof["primary"]
+    known = records.known_values(cx, name, taxa=taxa)
     for value in known:
         if value.lower() == text.lower():
             return value, "", []                 # already a name, only the case differs
     if " " in text or len(text) > 12:
         return text, "", []                      # a real name, typed out. Leave it alone
-    hits = records.suggest(cx, name, text, limit=40)
+    hits = records.suggest(cx, name, text, limit=40, taxa=taxa)
     if not hits:
         return text, "", []
     best = hits[0]["rank"]
@@ -399,6 +402,24 @@ class Session:
             self.filter = arg
             self.reload(keep_id=p["id"] if p else None)
             return False, [f"{len(self.photos)} photographs"]
+        if cmd in ("u", "undo"):
+            done = records.undo(self.cx, 1)
+            if not done:
+                return False, ["nothing to undo"]
+            self.reload(keep_id=p["id"] if p else None)
+            return False, [f"put back {done[0]['photos']} photograph"
+                           f"{'s' if done[0]['photos'] != 1 else ''}: {done[0]['what']}"]
+        if cmd == "p":
+            if p is None:
+                return False, []
+            _ids, errs = records.save(self.cx, self.prof, p["id"],
+                                      {records.PRECISION: arg.strip()},
+                                      apply_group=self.group)
+            if errs:
+                return False, list(errs.values())
+            p["precision"] = arg.strip()
+            return False, [f"published as a {arg.strip()} square"
+                           if arg.strip() else "published at its exact position"]
         if cmd == "s":
             if p is None:
                 return False, []

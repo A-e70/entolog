@@ -12,7 +12,8 @@ E = "<"                                   # little endian, as most cameras write
 
 
 def tiff_block(dt="2026:06:14 09:30:00", lat=None, lon=None, lat_ref="N",
-               lon_ref="W", orientation=1, model="entolog demo", width=0, height=0) -> bytes:
+               lon_ref="W", orientation=1, model="entolog demo", width=0, height=0,
+               gps_utc=None) -> bytes:
     """A TIFF/EXIF block: IFD0, the EXIF sub-IFD, and the GPS sub-IFD."""
     data = bytearray()
     base = [0]
@@ -40,7 +41,7 @@ def tiff_block(dt="2026:06:14 09:30:00", lat=None, lon=None, lat_ref="N",
         return (deg, minutes, round(((abs(v) - deg) * 60 - minutes) * 60, 4))
 
     gps = lat is not None and lon is not None
-    n0, n_exif, n_gps = 4, 3, (4 if gps else 0)
+    n0, n_exif, n_gps = 4, 3, ((6 if gps_utc else 4) if gps else 0)
     ifd0_off = 8
     exif_off = ifd0_off + 2 + n0 * 12 + 4
     gps_off = exif_off + 2 + n_exif * 12 + 4
@@ -59,6 +60,13 @@ def tiff_block(dt="2026:06:14 09:30:00", lat=None, lon=None, lat_ref="N",
                 entry(2, 5, 3, rationals(dms(lat))),
                 entry(3, 2, 2, lon_ref.encode() + b"\0"),
                 entry(4, 5, 3, rationals(dms(lon)))]
+        if gps_utc:
+            # The satellites carry the correct time, so a camera clock can be
+            # measured against it later.
+            gpsd.append(entry(7, 5, 3, rationals(
+                (gps_utc.hour, gps_utc.minute, gps_utc.second))))
+            gpsd.append(entry(29, 2, 11, gps_utc.strftime("%Y:%m:%d").encode() + b"\0"))
+            gpsd.sort(key=lambda e: e[:2])
 
     def ifd(entries):
         return struct.pack(E + "H", len(entries)) + b"".join(entries) + struct.pack(E + "I", 0)

@@ -84,6 +84,7 @@ def apply(cx, prof=None, text: str = "") -> dict:
                                   + ", ".join(sorted(editable)))
         return report
 
+    batch = records.next_batch(cx)
     for n, raw in enumerate(body, 2):
         cells = [unesc(c) for c in raw.split("\t")]
         if key_at >= len(cells) or not cells[key_at].strip():
@@ -109,7 +110,8 @@ def apply(cx, prof=None, text: str = "") -> dict:
                 change[name] = v
         if not change:
             continue
-        _ids, errors = records.save(cx, prof, pid, change, apply_group=False)
+        _ids, errors = records.save(cx, prof, pid, change, apply_group=False,
+                                    batch=batch)
         for f, e in errors.items():
             report["problems"].append(f"line {n}, {f}: {e}")
         report["changed"] += 1

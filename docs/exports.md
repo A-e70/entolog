@@ -54,6 +54,15 @@ being counted twice when it reaches an aggregator by two routes.
 The archive includes every field in your profile that has a `dwc` term, so your
 own fields travel with the records rather than being flattened away.
 
+If you have loaded a taxon list, every record also carries `taxonID`,
+`scientificNameAuthorship`, `taxonRank` and, for a name the list calls a synonym,
+`acceptedNameUsage`. Without a list those columns are left out entirely rather
+than written empty. See [records.md](records.md).
+
+A record published as a square rather than a point carries `informationWithheld`
+saying so, a `coordinateUncertaintyInMeters` matching the square, and a position
+at the centre of it.
+
 ## irecord
 
 The columns iRecord's spreadsheet import offers, so the mapping step maps itself:
@@ -63,8 +72,10 @@ Species or taxon name, Date, Spatial reference, Location name, Recorder Name,
 Identified By, Quantity, Stage, Sex, Occurrence comment, Recorder certainty
 ```
 
-Dates are written `dd/mm/yyyy`. The spatial reference is the OSGB grid reference
-when there is one, and decimal latitude and longitude otherwise.
+Dates are written `dd/mm/yyyy`. The spatial reference is the grid reference when
+there is one, British or Irish as the position requires, and decimal latitude and
+longitude otherwise. A record published as a square fills in `Sensitivity
+precision` in metres, and a taxon list fills in `Taxon Version Key`.
 
 Your fields are matched to these columns by their Darwin Core term, not by name,
 so a profile whose primary field is called `taxon` still fills in "Species or
