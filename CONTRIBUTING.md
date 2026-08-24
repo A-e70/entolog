@@ -2,6 +2,35 @@
 
 Bug reports and pull requests are welcome.
 
+## Licence, and signing off
+
+entolog is MIT licensed. Every version already published stays MIT, and nothing
+here changes that.
+
+Two things are asked of a pull request.
+
+**Sign off your commits.** `git commit -s` adds a line like
+
+```
+Signed-off-by: Jane Recorder <jane@example.org>
+```
+
+which is the [Developer Certificate of Origin](https://developercertificate.org),
+version 1.1. It says you wrote the patch, or otherwise have the right to submit
+it under this project's licence. Nothing to sign, no account, no paperwork.
+
+**The terms your contribution arrives under.** By signing off you agree that your
+contribution is licensed under the MIT licence, and that the copyright holder may
+also distribute the project, including your contribution, under other licence
+terms in future. You keep the copyright in what you wrote.
+
+That second part is here so entolog can be offered on different terms later if an
+organisation needs that, without having to track down every past contributor. It
+is a stated condition of contributing rather than a signed agreement, and
+anything turning on it commercially would want a proper contributor licence
+agreement instead. If you would rather not agree to it, say so in the pull
+request and we can work out what to do before anything is merged.
+
 ## Running it from source
 
 ```bash

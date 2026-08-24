@@ -301,6 +301,7 @@ what this machine has.
 - [Exports](docs/exports.md), which format which scheme wants
 - [Image viewers](docs/viewers.md), feh, nsxiv, geeqie and anything else
 - [Where entolog fits](docs/comparison.md), honestly, next to what already exists
+- [For organisations](docs/organisations.md), deployment, scheme profiles, data licensing and what stays local
 - [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
 ## Files
@@ -330,4 +331,5 @@ python3 -m unittest discover -s tests      # 168 tests, no network, no camera
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Contributions are accepted on the terms in
+[CONTRIBUTING.md](CONTRIBUTING.md).
