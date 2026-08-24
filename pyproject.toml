@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "entolog"
+version = "1.0.0"
+description = "Turn a folder of insect photographs into a species record table"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []                      # standard library only, on purpose
+license = {text = "MIT"}
+keywords = ["entomology", "biodiversity", "exif", "darwin core", "recording"]
+
+[project.optional-dependencies]
+# Only needed to preview raw files (NEF, CR2, DNG) that a browser cannot show.
+raw = ["pillow>=9"]
+
+[project.scripts]
+entolog = "entolog.cli:main"
+
+[tool.setuptools]
+packages = ["entolog"]
+
+[tool.setuptools.package-data]
+entolog = ["web/*.html"]
