@@ -38,6 +38,8 @@ CREATE INDEX IF NOT EXISTS photos_seq ON photos(seq);
 CREATE INDEX IF NOT EXISTS photos_group ON photos(group_id);
 CREATE INDEX IF NOT EXISTS photos_fp ON photos(fingerprint);
 
+-- Records made before 1.1 lived here. Kept as the safety net that
+-- _carry_over reads from; nothing writes to it any more.
 CREATE TABLE IF NOT EXISTS records (
   photo_id   INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
   species    TEXT DEFAULT '',
@@ -152,16 +154,3 @@ def set_meta(cx, key, value):
     cx.execute("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
                (key, json.dumps(value)))
     cx.commit()
-
-
-DEFAULT_VOCAB = {
-    "stage": ["adult", "larva", "nymph", "pupa", "egg", "exuvia", "case", "mine", "gall"],
-    "sex": ["", "male", "female", "worker", "queen", "unknown"],
-    "confidence": ["", "certain", "probable", "aggregate", "needs dissection"],
-}
-
-
-def vocab(cx) -> dict:
-    v = dict(DEFAULT_VOCAB)
-    v.update(get_meta(cx, "vocab", {}) or {})
-    return v

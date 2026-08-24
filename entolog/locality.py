@@ -163,6 +163,56 @@ def osgb_gridref(lat: float, lon: float, digits: int = 8) -> str:
 
 
 # --------------------------------------------------------------------------
+# storing what a position is called
+def place_key(lat: float, lon: float, dp: int = 4) -> str:
+    """Positions rounded to about 10 m, so one lookup covers a whole burst."""
+    return f"{lat:.{dp}f},{lon:.{dp}f}"
+
+
+def store(cx, lat, lon, verbose, parts=2, source="import") -> str:
+    short = shorten(verbose, parts)
+    key = place_key(lat, lon)
+    cx.execute("INSERT INTO places(key, lat, lon, verbose, short, source) "
+               "VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
+               "verbose=excluded.verbose, short=excluded.short, source=excluded.source",
+               (key, lat, lon, str(verbose), short, source))
+    return short
+
+
+def apply_to_photos(cx) -> int:
+    """Copy every known place onto the photographs taken there."""
+    n = 0
+    for p in cx.execute("SELECT key, verbose, short FROM places").fetchall():
+        lat, _, lon = p["key"].partition(",")
+        n += cx.execute(
+            "UPDATE photos SET locality=?, locality_full=? "
+            "WHERE lat IS NOT NULL AND printf('%.4f', lat)=? AND printf('%.4f', lon)=?",
+            (p["short"], p["verbose"], lat, lon)).rowcount
+    cx.commit()
+    return n
+
+
+def reshorten(cx, parts=2) -> int:
+    for p in cx.execute("SELECT key, verbose FROM places").fetchall():
+        cx.execute("UPDATE places SET short=? WHERE key=?",
+                   (shorten(p["verbose"], parts), p["key"]))
+    cx.commit()
+    return apply_to_photos(cx)
+
+
+def pending(cx) -> list:
+    """Positions that have no name yet, one per rounded position."""
+    # Group by the expression, not by an alias: places.key is in scope here and
+    # would swallow every row into one NULL group.
+    return [dict(r) for r in cx.execute(
+        "SELECT printf('%.4f', p.lat) || ',' || printf('%.4f', p.lon) AS place_key, "
+        "AVG(p.lat) lat, AVG(p.lon) lon, COUNT(*) n FROM photos p "
+        "LEFT JOIN places pl ON pl.key = printf('%.4f', p.lat)||','||printf('%.4f', p.lon) "
+        "WHERE p.lat IS NOT NULL AND pl.key IS NULL "
+        "GROUP BY printf('%.4f', p.lat) || ',' || printf('%.4f', p.lon) "
+        "ORDER BY n DESC")]
+
+
 def lookup(lat: float, lon: float, email: str = "", zoom: int = 16, pause: float = 1.1):
     """Ask OpenStreetMap what is at a position. Network. Called only by the
     explicit `locality lookup` command, one request a second as they ask."""

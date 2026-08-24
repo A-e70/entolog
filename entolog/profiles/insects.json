@@ -15,6 +15,7 @@
     {"name": "comments", "type": "multiline", "dwc": "occurrenceRemarks",
      "help": "habitat, host plant, behaviour, how it was determined"}
   ],
+  "entry": {"order": ["species", "stage", "sex", "comments", "confidence"]},
   "export": {
     "columns": ["filename", "date", "time", "latitude", "longitude",
                 "species", "stage", "sex", "comments"]

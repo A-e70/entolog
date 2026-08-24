@@ -31,11 +31,6 @@ def fingerprint(path: Path, size: int) -> str:
     return h.hexdigest()[:24]
 
 
-def place_key(lat: float, lon: float, dp: int = 4) -> str:
-    """Positions rounded to about 10 m. One lookup then covers a whole burst."""
-    return f"{lat:.{dp}f},{lon:.{dp}f}"
-
-
 def haversine_m(a_lat, a_lon, b_lat, b_lon) -> float:
     r = 6_371_000.0
     p1, p2 = math.radians(a_lat), math.radians(b_lat)
@@ -138,7 +133,7 @@ def scan(cx, roots, recursive=True, gap_seconds=150, progress=None) -> dict:
                 moved += 1
             if ex.get("lat") is not None:
                 place = cx.execute("SELECT verbose, short FROM places WHERE key=?",
-                                   (place_key(ex["lat"], ex["lon"]),)).fetchone()
+                                   (locality.place_key(ex["lat"], ex["lon"]),)).fetchone()
                 if place:
                     cx.execute("UPDATE photos SET locality=?, locality_full=? WHERE id=?",
                                (place["short"], place["verbose"], pid))

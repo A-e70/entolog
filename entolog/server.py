@@ -17,7 +17,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import db, export, records
+from . import db, entry, export, records
 from . import profile as P
 
 def _app_html() -> str:
@@ -129,6 +129,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # The token rides in the query string on first load, so no outbound link
+        # may carry a referrer.
+        self.send_header("Referrer-Policy", "no-referrer")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -144,16 +148,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "private, max-age=600")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(data)
 
     def _authed(self, qs) -> bool:
-        tok = (qs.get("t", [""])[0]
-               or re.search(r"entolog=([A-Za-z0-9_-]+)", self.headers.get("Cookie", "") or "")
-               and re.search(r"entolog=([A-Za-z0-9_-]+)", self.headers.get("Cookie", "")).group(1)
-               or "")
-        return secrets.compare_digest(str(tok), self.ctx.token)
+        token = qs.get("t", [""])[0]
+        if not token:
+            m = re.search(r"entolog=([A-Za-z0-9_-]+)", self.headers.get("Cookie", "") or "")
+            token = m.group(1) if m else ""
+        return secrets.compare_digest(token, self.ctx.token)
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
@@ -175,7 +181,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             html = _app_html()
             return self._send(200, html, "text/html; charset=utf-8",
-                              {"Set-Cookie": f"entolog={self.ctx.token}; Path=/; SameSite=Strict"})
+                              {"Set-Cookie": f"entolog={self.ctx.token}; Path=/; SameSite=Strict; HttpOnly"})
         if path == "/api/state":
             prof = P.active(cx)
             return self._json({
@@ -187,6 +193,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/photos":
             return self._json(list_photos(cx, qs.get("filter", ["all"])[0],
                                           qs.get("q", [""])[0]))
+        if path == "/api/current":
+            row = entry.get_current(cx)
+            if row is None:
+                return self._json({"id": None})
+            return self._json({"id": row["id"], "filename": row["filename"],
+                               "line": entry.status_line(cx, P.active(cx), row)})
         if path == "/api/suggest":
             return self._json(records.suggest(cx, qs.get("field", [""])[0],
                                               qs.get("q", [""])[0]))
@@ -234,6 +246,12 @@ class Handler(BaseHTTPRequestHandler):
             except P.ProfileError as e:
                 return self._send(400, str(e), "text/plain")
             return self._json({"profile": prof})
+        if u.path == "/api/current":
+            try:
+                row = entry.set_current(cx, str(body.get("target", "")))
+            except LookupError as e:
+                return self._send(404, str(e), "text/plain")
+            return self._json({"id": row["id"], "filename": row["filename"]})
         if u.path == "/api/meta":
             for k, v in body.items():
                 db.set_meta(cx, k, v)

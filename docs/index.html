@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>entolog</title>
+<meta name="description" content="Turn a folder of photographs into a species record table, with the fields you decide on, from the window, the terminal or the image viewer you already use.">
+<style>
+:root{
+  --panel:#141b26; --line:#22304a; --text:#e8eef7; --dim:#93a4bd;
+  --accent:#4c8dff; --good:#3ddc84;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:#0b1220;color:var(--text);
+  font:16px/1.65 ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent)}
+.wrap{max-width:940px;margin:0 auto;padding:0 24px}
+header{
+  padding:88px 0 64px;
+  background:radial-gradient(1200px 420px at 15% -10%,#16305c 0%,rgba(11,18,32,0) 70%);
+  border-bottom:1px solid var(--line);
+}
+h1{font-size:clamp(38px,7vw,62px);margin:0 0 8px;letter-spacing:-.02em;font-weight:700}
+h1 span{color:var(--accent)}
+.tag{font-size:clamp(18px,2.4vw,23px);color:var(--dim);max-width:640px;margin:0 0 32px}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.btn{
+  display:inline-block;padding:11px 20px;border-radius:10px;text-decoration:none;
+  font-weight:600;border:1px solid var(--line);color:var(--text);transition:.15s
+}
+.btn:hover{border-color:var(--accent);transform:translateY(-1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#04122e}
+.btn.primary:hover{background:#6ba3ff}
+.note{color:var(--dim);font-size:14px}
+section{padding:64px 0;border-bottom:1px solid var(--line)}
+h2{font-size:clamp(24px,3.4vw,32px);margin:0 0 6px;letter-spacing:-.01em}
+h2+p.lede{color:var(--dim);margin:0 0 28px;max-width:660px}
+h3{margin:0 0 6px;font-size:17px}
+pre{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:16px 18px;overflow-x:auto;font:13.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+  margin:0
+}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+p code,li code{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:.9em}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:22px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+.card h3{color:var(--text)}
+.card p{color:var(--dim);margin:0;font-size:15px}
+.card pre{background:#0d141f;margin-top:14px;font-size:12.5px;
+  white-space:pre-wrap;overflow-wrap:anywhere}
+table{width:100%;border-collapse:collapse;font-size:14px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:8px 14px 8px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.good{color:var(--good)}
+ul.plain{list-style:none;padding:0;margin:0}
+ul.plain li{padding:9px 0;border-bottom:1px solid var(--line);color:var(--dim)}
+ul.plain li b{color:var(--text);font-weight:600}
+footer{padding:44px 0 72px;color:var(--dim);font-size:14px}
+footer a{color:var(--dim)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>ento<span>log</span></h1>
+    <p class="tag">Turn a folder of photographs into a species record table, with
+      the fields you decide on, from the window, the terminal, or the image viewer
+      you already use.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/A-e70/entolog/releases/latest">Download one file</a>
+      <a class="btn" href="https://github.com/A-e70/entolog">Source on GitHub</a>
+      <a class="btn" href="https://github.com/A-e70/entolog/blob/main/docs/viewers.md">Viewer integration</a>
+    </div>
+    <p class="note">Standard library Python 3.9 or newer. No packages. Nothing is
+      uploaded and nothing leaves your machine.</p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>The photograph already knows when and where</h2>
+    <p class="lede">You know what. entolog reads the date and the position out of
+      the EXIF, works out a grid reference, and takes the rest as fast as you can
+      type it.</p>
+<pre>filename      date        time      latitude   longitude  locality                   species       stage  sex     comments
+IMG_0421.jpg  2026-06-14  09:26:07  51.753792  -1.257281  Wytham Woods, Oxfordshire  Vespa crabro  adult  female  on ivy, sunny bank</pre>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Three ways in, one record</h2>
+    <p class="lede">The same profile, the same validation, the same storage, the
+      same exports. Use whichever suits the hour.</p>
+    <div class="cols">
+      <div class="card">
+        <h3>A window</h3>
+        <p>Photograph, form, keyboard shortcuts. Bursts are grouped so one record
+          covers the whole event.</p>
+        <pre>python3 -m entolog ~/photos/june</pre>
+      </div>
+      <div class="card">
+        <h3>The terminal</h3>
+        <p>One line per specimen. Abbreviations resolve, Tab completes, nothing is
+          guessed when it is ambiguous.</p>
+        <pre>&gt; Vespa crabro / adult / f / on ivy
+saved 3 photographs</pre>
+      </div>
+      <div class="card">
+        <h3>Your own viewer</h3>
+        <p>feh, nsxiv, geeqie, anything that can run a command. entolog follows
+          what you are looking at.</p>
+        <pre>entolog current %f
+entolog record - "vecr / adult"</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>The fields are yours</h2>
+    <p class="lede">A profile is a JSON file listing what a record contains.
+      The storage, the form, the terminal grammar, the shortcuts, the
+      autocomplete, the validation and the export columns are all generated from
+      it. Adding a field is editing a file, not editing entolog.</p>
+<pre>{
+  "name": "moths",
+  "primary": "taxon",
+  "fields": [
+    {"name": "taxon", "type": "text", "learn": true, "dwc": "scientificName"},
+    {"name": "count", "type": "number", "min": 1, "dwc": "individualCount"},
+    {"name": "trap", "type": "choice", "digits": true, "open": false,
+     "choices": ["actinic", "MV", "LED", "sugar", "net"]},
+    {"name": "host_plant", "type": "text", "learn": true, "key": "h",
+     "dwc": "associatedTaxa"}
+  ]
+}</pre>
+    <p class="note" style="margin-top:14px">Ships with profiles for insects,
+      general biodiversity and plants. Every field carrying a Darwin Core term
+      travels into the GBIF, iRecord and NBN Atlas export on its own.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>It is careful with a record</h2>
+    <ul class="plain">
+      <li><b>No GPS in the file.</b> The position stays empty rather than guessed,
+        and a filter lists exactly which photographs need a grid reference by hand.</li>
+      <li><b>No EXIF date.</b> Falls back to the file's own timestamp, marks that
+        it did so in its own column, and shows it in amber.</li>
+      <li><b>A value that fails a check</b> is still stored. Losing what someone
+        typed is worse than storing something odd.</li>
+      <li><b>Renamed or moved photographs</b> keep their record, matched by
+        fingerprint on the next scan.</li>
+      <li><b>Southern and western hemispheres</b> come out negative rather than
+        mirrored, which is the classic way a record lands in the wrong ocean.</li>
+      <li><b>Switching profile</b> never deletes a value, and refuses to orphan a
+        field that holds records unless you insist.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Getting it</h2>
+<pre>curl -LO https://github.com/A-e70/entolog/releases/latest/download/entolog.pyz
+python3 entolog.pyz ~/photos/june
+
+# or from source
+git clone https://github.com/A-e70/entolog &amp;&amp; cd entolog
+python3 -m entolog ~/photos/june</pre>
+    <p class="note" style="margin-top:14px"><span class="good">123 tests</span>,
+      no network, no camera needed. MIT licence.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    entolog is free software under the MIT licence.
+    <a href="https://github.com/A-e70/entolog">github.com/A-e70/entolog</a>
+  </div>
+</footer>
+</body>
+</html>

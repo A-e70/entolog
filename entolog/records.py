@@ -38,7 +38,7 @@ def _attach(cx, rows):
 
 PHOTO_COLS = ("id, filename, rel_path, taken_at, taken_source, lat, lon, altitude, "
               "gridref, locality, orientation, camera, lens, width, height, group_id, "
-              "seq, bytes, thumb_offset")
+              "seq, bytes, thumb_offset, path, fingerprint")
 
 
 def list_photos(cx, prof, flt="all", q="", limit=5000) -> list:

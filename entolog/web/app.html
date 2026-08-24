@@ -172,6 +172,8 @@ dialog h3{margin:0 0 10px}
   </div>
   <input id="search" type="text" placeholder="filter by any field">
   <div class="spacer"></div>
+  <button class="chip" id="followBtn" aria-pressed="false"
+    title="track whatever your image viewer says it is showing">follow viewer</button>
   <span class="prof" id="prof"></span>
   <button class="btn" id="exportBtn">Export</button>
 </header>
@@ -351,7 +353,7 @@ function fieldHTML(f, p){
 function drawSide(){
   const p = cur();
   const pos = (p.lat != null)
-    ? `<a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=17/${p.lat}/${p.lon}" target="_blank" rel="noopener">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</a>`
+    ? `<a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=17/${p.lat}/${p.lon}" target="_blank" rel="noopener noreferrer">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</a>`
     : '<span class="est">none in the file</span>';
   const gsize = S.photos.filter(x => x.group_id === p.group_id).length;
   $('#side').innerHTML = `
@@ -517,6 +519,27 @@ function focusField(name){
   const el = document.querySelector(`#side [data-field="${CSS.escape(name)}"]`);
   if (el){ el.focus(); el.select?.(); }
 }
+
+/* ---------- following an outside image viewer ---------- */
+let followTimer = null, followLast = null;
+async function pollCurrent(){
+  let cur;
+  try { cur = await api('/api/current'); } catch { return; }
+  if (!cur.id || cur.id === followLast) return;
+  followLast = cur.id;
+  if (!S.photos.some(p => p.id === cur.id)){
+    S.filter = 'all';
+    await load(cur.id);
+  }
+  const j = S.photos.findIndex(p => p.id === cur.id);
+  if (j >= 0 && j !== S.i) select(j);
+}
+$('#followBtn').onclick = e => {
+  const on = e.target.getAttribute('aria-pressed') !== 'true';
+  e.target.setAttribute('aria-pressed', on);
+  clearInterval(followTimer); followTimer = null; followLast = null;
+  if (on){ pollCurrent(); followTimer = setInterval(pollCurrent, 1200); }
+};
 
 /* ---------- header controls ---------- */
 $('#filters').onclick = e => { const c = e.target.closest('.chip'); if (c){ S.filter = c.dataset.f; S.i = 0; load(); } };

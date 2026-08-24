@@ -77,6 +77,10 @@ def load(source) -> dict:
         prof["primary"] = first
     for f in out_fields:
         f["primary"] = f["name"] == prof["primary"]
+    # Typing order can differ from the order the window shows them in: comments
+    # are typed last but often read best in the middle.
+    prof.setdefault("entry", {})
+    prof["entry"].setdefault("order", [f["name"] for f in out_fields])
     prof.setdefault("export", {})
     prof["export"].setdefault("columns", default_columns(prof))
     errors = validate(prof)
@@ -133,6 +137,9 @@ def validate(prof) -> list:
         errors.append("only one field can take the number keys, got " + ", ".join(digits))
     if prof.get("primary") not in seen and prof.get("fields"):
         errors.append(f"primary field {prof.get('primary')!r} is not one of the fields")
+    for c in prof.get("entry", {}).get("order", []):
+        if c not in seen:
+            errors.append(f"entry order names {c!r}, which is not a field")
     for c in prof.get("export", {}).get("columns", []):
         if c not in seen and c not in PHOTO_FIELDS:
             errors.append(f"export column {c!r} is neither a field nor part of the photograph")
@@ -185,8 +192,7 @@ def active(cx) -> dict:
 
 def set_active(cx, source, force=False) -> dict:
     """Adopt a profile. Refuses to drop a field that already holds records."""
-    prof = source if isinstance(source, dict) and "fields" in source else load(source)
-    prof = load(prof)
+    prof = load(source)
     old = cx.execute("SELECT v FROM meta WHERE k='profile'").fetchone()
     if old and not force:
         losing = []

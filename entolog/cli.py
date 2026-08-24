@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import webbrowser
 from pathlib import Path
 
-from . import __version__, db, export, records, scan as scanmod, server
+from . import __version__, db, entry, export, locality, records
+from . import scan as scanmod, server, tsvedit
 from . import profile as P
 
 DEFAULT_DB = "entolog.db"
@@ -15,6 +17,8 @@ DEFAULT_DB = "entolog.db"
 def _db_for(args) -> Path:
     if args.db:
         return Path(args.db).expanduser()
+    if os.environ.get("ENTOLOG_DB"):
+        return Path(os.environ["ENTOLOG_DB"]).expanduser()
     here = Path(DEFAULT_DB)
     if here.exists():
         return here
@@ -137,6 +141,196 @@ def cmd_set(args) -> int:
     return 0
 
 
+def _open(args):
+    dbpath = _db_for(args)
+    if not dbpath.exists():
+        print(f"no database at {dbpath}. Run: entolog scan <folder>", file=sys.stderr)
+        raise SystemExit(1)
+    cx = db.connect(dbpath)
+    return cx, P.active(cx)
+
+
+def cmd_enter(args) -> int:
+    cx, prof = _open(args)
+    return entry.run(cx, prof, flt=args.filter, per_photo=args.per_photo,
+                     follow=args.follow)
+
+
+def cmd_line(args) -> int:
+    cx, prof = _open(args)
+    try:
+        photo = entry.find(cx, args.target) if args.target else entry.get_current(cx)
+    except LookupError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    if photo is None:
+        print("nothing is current. Pass a file, or use: entolog current <file>",
+              file=sys.stderr)
+        return 1
+    print(entry.status_line(cx, prof, photo, fmt=args.format))
+    return 0
+
+
+def cmd_current(args) -> int:
+    cx, prof = _open(args)
+    try:
+        photo = entry.set_current(cx, args.target)
+    except LookupError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    if not args.quiet:
+        print(entry.status_line(cx, prof, photo, fmt=args.format))
+    return 0
+
+
+def cmd_record(args) -> int:
+    cx, prof = _open(args)
+    try:
+        photo = entry.find(cx, args.target) if args.target != "-" else entry.get_current(cx)
+    except LookupError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    if photo is None:
+        print("nothing is current", file=sys.stderr)
+        return 1
+    if args.flag or args.unflag:
+        records.save(cx, prof, photo["id"],
+                     {records.FLAG: "1" if args.flag else ""}, apply_group=False)
+        say, ids, errors = ["flagged" if args.flag else "unflagged"], [photo["id"]], {}
+    elif not args.line:
+        print("give something to record, or --flag", file=sys.stderr)
+        return 1
+    else:
+        say, ids, _clean, errors = entry.record_one(
+            cx, prof, photo, " ".join(args.line), group=not args.photo)
+    for line in say:
+        print(line, file=sys.stderr if errors else sys.stdout)
+    if errors:
+        return 1
+    print(entry.status_line(cx, prof, entry.find(cx, str(photo["id"])), fmt=args.format))
+    return 0
+
+
+def cmd_edit(args) -> int:
+    cx, prof = _open(args)
+    import subprocess
+    import tempfile
+    text = tsvedit.dump(cx, prof, flt=args.filter)
+    editor = args.editor or os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    with tempfile.NamedTemporaryFile("w+", suffix=".tsv", delete=False,
+                                     encoding="utf-8") as fh:
+        fh.write(text)
+        path = Path(fh.name)
+    print(f"{editor} {path}")
+    try:
+        subprocess.call([*editor.split(), str(path)])
+    except OSError as e:
+        print(f"could not run {editor!r}: {e}", file=sys.stderr)
+        return 1
+    edited = path.read_text(encoding="utf-8")
+    if edited == text:
+        print("nothing changed")
+        path.unlink(missing_ok=True)
+        return 0
+    print(tsvedit.summarise(tsvedit.apply(cx, prof, edited)))
+    path.unlink(missing_ok=True)
+    return 0
+
+
+def cmd_apply(args) -> int:
+    cx, prof = _open(args)
+    text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
+    print(tsvedit.summarise(tsvedit.apply(cx, prof, text)))
+    return 0
+
+
+def cmd_table(args) -> int:
+    cx, prof = _open(args)
+    text = tsvedit.dump(cx, prof, flt=args.filter, context=not args.bare)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote {args.out}")
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def cmd_locality(args) -> int:
+    cx, _prof = _open(args)
+    parts = args.parts
+    if args.action == "list":
+        rows = cx.execute("SELECT key, short, verbose FROM places ORDER BY short").fetchall()
+        for r in rows:
+            print(f"{r['key']:>22}  {r['short']}")
+        missing = locality.pending(cx)
+        print(f"{len(rows)} places named, {len(missing)} positions still unnamed"
+              + (f" ({sum(m['n'] for m in missing)} photographs)" if missing else ""))
+        return 0
+    if args.action == "shorten":
+        n = locality.reshorten(cx, parts)
+        print(f"re-shortened to {parts} part(s), {n} photographs updated")
+        return 0
+    if args.action == "import":
+        text = sys.stdin.read() if args.file in (None, "-") else \
+            Path(args.file).read_text(encoding="utf-8")
+        done = bad = 0
+        for line in text.splitlines():
+            line = line.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            cells = [c.strip() for c in line.split("\t")]
+            try:
+                if len(cells) >= 3 and _isnum(cells[0]) and _isnum(cells[1]):
+                    locality.store(cx, float(cells[0]), float(cells[1]),
+                                   "\t".join(cells[2:]), parts)
+                elif len(cells) >= 2:
+                    photo = entry.find(cx, cells[0])
+                    if photo["lat"] is None:
+                        bad += 1
+                        continue
+                    locality.store(cx, photo["lat"], photo["lon"],
+                                   "\t".join(cells[1:]), parts)
+                else:
+                    bad += 1
+                    continue
+                done += 1
+            except (LookupError, ValueError):
+                bad += 1
+        cx.commit()
+        n = locality.apply_to_photos(cx)
+        print(f"{done} places stored, {n} photographs named"
+              + (f", {bad} lines could not be used" if bad else ""))
+        return 0
+    if args.action == "lookup":
+        todo = locality.pending(cx)[:args.limit] if args.limit else locality.pending(cx)
+        if not todo:
+            print("every position already has a name")
+            return 0
+        print(f"asking OpenStreetMap about {len(todo)} position(s), one a second. "
+              f"This is the only part of entolog that uses the network.")
+        for i, place in enumerate(todo, 1):
+            try:
+                data = locality.lookup(place["lat"], place["lon"], email=args.email)
+            except Exception as e:                     # network, rate limit, anything
+                print(f"stopped after {i - 1}: {e}", file=sys.stderr)
+                break
+            short = locality.store(cx, place["lat"], place["lon"], data, parts, "osm")
+            print(f"  {place['place_key']}  {short}   ({place['n']} photographs)")
+        cx.commit()
+        n = locality.apply_to_photos(cx)
+        print(f"{n} photographs named")
+        return 0
+    return 1
+
+
+def _isnum(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="entolog",
@@ -186,6 +380,66 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--force", action="store_true",
                     help="adopt it even though fields holding records would be dropped")
     pr.set_defaults(func=cmd_profile)
+
+    en = sub.add_parser("enter", aliases=["type"],
+                        help="record from the keyboard, no window needed")
+    en.add_argument("--filter", default="todo",
+                    choices=["todo", "all", "done", "flagged", "nogps"])
+    en.add_argument("--per-photo", action="store_true",
+                    help="one record per photograph instead of per specimen event")
+    en.add_argument("--follow", action="store_true",
+                    help="track whatever your image viewer says it is showing")
+    en.set_defaults(func=cmd_enter)
+
+    ln = sub.add_parser("line", help="one status line for an image viewer to display")
+    ln.add_argument("target", nargs="?", help="path, filename or number. Default: current")
+    ln.add_argument("--format", help="e.g. '{filename} {date} {gridref} | {record}'")
+    ln.set_defaults(func=cmd_line)
+
+    cu = sub.add_parser("current", help="tell entolog which photograph is being viewed")
+    cu.add_argument("target")
+    cu.add_argument("--format")
+    cu.add_argument("-q", "--quiet", action="store_true")
+    cu.set_defaults(func=cmd_current)
+
+    rc = sub.add_parser("record", help="record one photograph in one command")
+    rc.add_argument("target", help="path, filename, number, or - for the current one")
+    rc.add_argument("line", nargs="*", help="e.g. 'Vespa crabro / adult / f / on ivy'")
+    rc.add_argument("--flag", action="store_true", help="mark for a second look")
+    rc.add_argument("--unflag", action="store_true")
+    rc.add_argument("--photo", action="store_true",
+                    help="this photograph only, not the whole specimen event")
+    rc.add_argument("--format")
+    rc.set_defaults(func=cmd_record)
+
+    ed = sub.add_parser("edit", help="edit the whole table in $EDITOR and read it back")
+    ed.add_argument("--filter", default="all",
+                    choices=["todo", "all", "done", "flagged", "nogps"])
+    ed.add_argument("--editor")
+    ed.set_defaults(func=cmd_edit)
+
+    ap = sub.add_parser("apply", help="read an edited table back in")
+    ap.add_argument("file", help="a tab separated file, or - for standard input")
+    ap.set_defaults(func=cmd_apply)
+
+    tb = sub.add_parser("table", help="write the editable table out")
+    tb.add_argument("-o", "--out")
+    tb.add_argument("--bare", action="store_true", help="editable columns only")
+    tb.add_argument("--filter", default="all",
+                    choices=["todo", "all", "done", "flagged", "nogps"])
+    tb.set_defaults(func=cmd_table)
+
+    lo = sub.add_parser("locality", help="turn a position into a place name")
+    lo.add_argument("action", choices=["list", "import", "lookup", "shorten"])
+    lo.add_argument("file", nargs="?",
+                    help="for import: 'lat<TAB>lon<TAB>name' or 'filename<TAB>name', "
+                         "or - for standard input")
+    lo.add_argument("--parts", type=int, default=2,
+                    help="how many parts of the name to keep (default 2)")
+    lo.add_argument("--limit", type=int, help="for lookup: stop after this many")
+    lo.add_argument("--email", default="",
+                    help="for lookup: OpenStreetMap ask for a contact address")
+    lo.set_defaults(func=cmd_locality)
 
     st = sub.add_parser("set", help="store a setting, e.g. set recorded_by 'A Naturalist'")
     st.add_argument("key")
