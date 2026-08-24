@@ -102,7 +102,9 @@ def image_bytes(ctx: Ctx, row, size: str) -> tuple[bytes | None, str, Path | Non
     cached = ctx.cache / f"{row['fingerprint']}-{'t' if size == 'thumb' else 'f'}.jpg"
     if cached.exists():
         return None, "image/jpeg", cached
-    side = 400 if size == "thumb" else 2200
+    # The window can magnify to eight times a photograph's own pixels, so a
+    # preview it has to make itself is worth having at a useful size.
+    side = 400 if size == "thumb" else 4000
     if _pillow_jpeg(src, cached, side) or _exiftool_preview(src, cached):
         return None, "image/jpeg", cached
     return None, mimetypes.guess_type(src.name)[0] or "application/octet-stream", src

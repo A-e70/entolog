@@ -165,7 +165,7 @@ That writes a folder of demo photographs with real EXIF, reads them and opens th
 window. Nothing is installed and nothing is uploaded.
 
 - Source: [github.com/A-e70/entolog](https://github.com/A-e70/entolog)
-- 286 tests, run with `python3 -m unittest discover -s tests`, no network needed
+- 287 tests, run with `python3 -m unittest discover -s tests`, no network needed
 - Continuous integration across Python 3.9 to 3.14 on Linux, macOS and Windows
 - MIT licensed, and every published version stays that way
 

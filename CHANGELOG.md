@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.1
+
+**It would not zoom far enough.** The limit was twice the photograph's own
+pixels, which is where interpolation starts but not where a recorder stops
+looking. Counting setae or checking a puncture means going further.
+
+- The window now magnifies to **eight times the photograph's own pixels**, four
+  times further than before, bounded at 32 times the fitted size because beyond
+  that the browser is drawing a silly layer rather than showing anything.
+- Past twice its own pixels it stops smoothing and **shows the pixels as they
+  are**. Crisper than a blur, and honest about there being nothing more to see.
+- A preview entolog renders itself, for a raw file a browser cannot open, is now
+  made at 4000 pixels rather than 2200, so there is something there to magnify.
+
 ## 1.6.0
 
 **The photograph viewer.** Zooming jumped, bounced and ran away too fast, and the

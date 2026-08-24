@@ -84,10 +84,18 @@ class Arithmetic(unittest.TestCase):
           out.huge = maxZoom(60000, 850);    // absurd, but must not be
           out.unknown = maxZoom(0, 850);     // not loaded yet
         """)
-        self.assertAlmostEqual(got["big"], 6000 / 850 * 2, places=3)
-        self.assertEqual(got["small"], 2)
-        self.assertEqual(got["huge"], 16)
-        self.assertEqual(got["unknown"], 8)
+        self.assertEqual(got["big"], 32)                  # 4.5 times its own pixels
+        self.assertEqual(got["small"], 8)                 # 8 times its own pixels
+        self.assertEqual(got["huge"], 32)
+        self.assertEqual(got["unknown"], 12)
+
+    def test_every_photograph_can_be_magnified_well_past_its_own_pixels(self):
+        got = self.run_js("""
+          out.cases = [[400, 400], [1200, 850], [4000, 850], [6000, 850]]
+            .map(([n, f]) => (maxZoom(n, f) * f) / n);   // times its own pixels
+        """)
+        for times in got["cases"]:
+            self.assertGreaterEqual(times, 4, got["cases"])
 
     def test_zoom_never_goes_below_fitting_or_above_the_limit(self):
         got = self.run_js("""

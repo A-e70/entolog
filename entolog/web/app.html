@@ -552,10 +552,12 @@ function wheelFactor(deltaY, deltaMode, pinch){
   return Math.exp(-d * (pinch ? 0.010 : 0.0022));
 }
 function maxZoom(natural, fitted){
-  // 1:1 with the source pixels is natural/fitted. A little beyond that is where
-  // a hair or a puncture becomes visible; far beyond it is only mush.
-  if (!natural || !fitted) return 8;
-  return Math.min(16, Math.max(2, (natural / fitted) * 2));
+  // 1:1 with the photograph's own pixels is natural/fitted. Counting setae or
+  // checking a puncture means going well past that, so it goes to eight times
+  // its own pixels. The ceiling of 32 is about the browser, not about taste:
+  // beyond it the layer it has to draw gets silly.
+  if (!natural || !fitted) return 12;
+  return Math.min(32, Math.max(8, (natural / fitted) * 8));
 }
 function clampZoom(z, max){ return Math.min(max, Math.max(1, z)); }
 function toLocal(point, base, offset, z){ return (point - base - offset) / z; }
@@ -585,6 +587,10 @@ function stageBox(){
 function paint(){
   const box = stageBox(); if (!box) return;
   box.img.style.transform = `translate(${V.ox.toFixed(2)}px,${V.oy.toFixed(2)}px) scale(${V.z.toFixed(4)})`;
+  // Past twice its own pixels, smoothing only invents detail. Showing the
+  // pixels as they are is both crisper and more honest.
+  const native = box.img.naturalWidth ? box.w * V.z / box.img.naturalWidth : 0;
+  box.img.style.imageRendering = native > 2 ? 'pixelated' : 'auto';
   $('#stage').classList.toggle('zoomed', V.z > 1.001);
   const zl = $('#zl');
   if (zl){
