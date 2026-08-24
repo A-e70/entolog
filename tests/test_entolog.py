@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fixtures
-from entolog import db, exifread, export, scan, server
+from entolog import db, exifread, export, records, scan, server
+from entolog import profile as P
 
 
 class Exif(unittest.TestCase):
@@ -91,9 +92,9 @@ class Scan(unittest.TestCase):
         self.cx.commit()
         scan.scan(self.cx, [self.tmp])
         row = self.cx.execute(
-            "SELECT r.species FROM records r JOIN photos p ON p.id=r.photo_id "
-            "WHERE p.filename='new.jpg'").fetchone()
-        self.assertEqual(row["species"], "Vespa crabro")
+            "SELECT fv.value FROM field_values fv JOIN photos p ON p.id=fv.photo_id "
+            "WHERE p.filename='new.jpg' AND fv.field='species'").fetchone()
+        self.assertEqual(row["value"], "Vespa crabro")
 
     def test_missing_exif_date_falls_back_to_the_file_and_says_so(self):
         (self.tmp / "bare.jpg").write_bytes(b"\xff\xd8\xff\xd9")
@@ -120,18 +121,21 @@ class Records(unittest.TestCase):
                                      {"species": "Andrena fulva", "sex": "female"},
                                      apply_group=True)
         self.assertEqual(len(touched), 3)
-        n = self.cx.execute("SELECT COUNT(*) c FROM records WHERE species='Andrena fulva'").fetchone()["c"]
+        n = self.cx.execute("SELECT COUNT(*) c FROM field_values "
+                            "WHERE field='species' AND value='Andrena fulva'").fetchone()["c"]
         self.assertEqual(n, 3)
 
     def test_single_photo_save_leaves_the_others_alone(self):
         server.save_record(self.cx, self.ids[0], {"species": "Pieris rapae"})
-        n = self.cx.execute("SELECT COUNT(*) c FROM records WHERE species!=''").fetchone()["c"]
+        n = self.cx.execute("SELECT COUNT(*) c FROM field_values "
+                            "WHERE field='species' AND value!=''").fetchone()["c"]
         self.assertEqual(n, 1)
 
     def test_species_list_learns_as_you_type(self):
         server.save_record(self.cx, self.ids[0], {"species": "Bombus terrestris"})
         server.save_record(self.cx, self.ids[1], {"species": "Bombus terrestris"})
-        row = self.cx.execute("SELECT uses FROM species WHERE name='Bombus terrestris'").fetchone()
+        row = self.cx.execute("SELECT uses FROM terms WHERE field='species' "
+                              "AND value='Bombus terrestris'").fetchone()
         self.assertEqual(row["uses"], 2)
 
     def test_filters(self):
@@ -213,7 +217,9 @@ class Server(unittest.TestCase):
         self.assertIn(b"entolog", self.get("/").read())
         st = json.loads(self.get("/api/state").read())
         self.assertEqual(st["total"], 1)
-        self.assertIn("adult", st["vocab"]["stage"])
+        self.assertEqual(st["profile"]["name"], "insects")
+        stage = next(f for f in st["profile"]["fields"] if f["name"] == "stage")
+        self.assertIn("adult", stage["choices"])
 
     def test_rejects_a_request_without_the_token(self):
         with self.assertRaises(urllib.error.HTTPError) as e:

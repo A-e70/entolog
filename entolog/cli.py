@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import webbrowser
 from pathlib import Path
 
-from . import __version__, db, export, scan as scanmod, server
+from . import __version__, db, export, records, scan as scanmod, server
+from . import profile as P
 
 DEFAULT_DB = "entolog.db"
 
@@ -75,17 +77,57 @@ def cmd_stats(args) -> int:
     return 0
 
 
-def cmd_species(args) -> int:
+def cmd_terms(args) -> int:
     cx = db.connect(_db_for(args))
-    names = [n.strip() for n in Path(args.file).read_text(encoding="utf-8").splitlines() if n.strip()]
-    for n in names:
-        parts = [p.strip() for p in n.split("\t")] if "\t" in n else [n, ""]
-        cx.execute("INSERT INTO species(name, vernacular, from_list) VALUES(?,?,1) "
-                   "ON CONFLICT(name) DO UPDATE SET vernacular=excluded.vernacular, from_list=1",
-                   (parts[0], parts[1] if len(parts) > 1 else ""))
-    cx.commit()
-    print(f"{len(names)} names available for autocomplete")
+    prof = P.active(cx)
+    if args.field not in P.names(prof):
+        print(f"the {prof['name']} profile has no field called {args.field!r}. "
+              f"It has: {', '.join(P.names(prof))}", file=sys.stderr)
+        return 1
+    n = records.import_terms(cx, args.field,
+                             Path(args.file).read_text(encoding="utf-8").splitlines())
+    print(f"{n} entries ready to autocomplete in {args.field}")
     return 0
+
+
+def cmd_profile(args) -> int:
+    dbpath = _db_for(args)
+    if args.action == "list":
+        for name in P.BUILTIN:
+            prof = P.load(name)
+            mark = ""
+            if dbpath.exists():
+                mark = "  <- in use" if P.active(db.connect(dbpath))["name"] == name else ""
+            print(f"{name:10} {prof['title']}{mark}")
+            print(f"{'':10} {', '.join(P.names(prof))}")
+        return 0
+    cx = db.connect(dbpath)
+    if args.action == "show":
+        print(json.dumps(P.active(cx), indent=2))
+        return 0
+    if args.action == "use":
+        if not args.name:
+            print("which profile? A built-in name or a path to a .json file", file=sys.stderr)
+            return 1
+        try:
+            prof = P.set_active(cx, args.name, force=args.force)
+        except P.ProfileError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print(f"profile {prof['name']}: {', '.join(P.names(prof))}")
+        moved = records.counts(cx, prof)
+        print(f"{moved['done']}/{moved['total']} photographs have a {prof['primary']}")
+        return 0
+    if args.action == "check":
+        try:
+            prof = P.load(args.name) if args.name else P.active(cx)
+        except P.ProfileError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print(f"{prof['name']} is usable: {len(prof['fields'])} fields, "
+              f"primary {prof['primary']}")
+        return 0
+    return 1
 
 
 def cmd_set(args) -> int:
@@ -131,9 +173,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("stats", help="how far through the folder you are").set_defaults(func=cmd_stats)
 
-    sp = sub.add_parser("species", help="load a checklist for autocomplete (one name per line)")
-    sp.add_argument("file")
-    sp.set_defaults(func=cmd_species)
+    sp = sub.add_parser("terms", aliases=["species"],
+                        help="load a checklist into a field for autocomplete")
+    sp.add_argument("field", nargs="?", default="species",
+                    help="which field the list belongs to (default species)")
+    sp.add_argument("file", help="one entry per line, or 'entry<TAB>note'")
+    sp.set_defaults(func=cmd_terms)
+
+    pr = sub.add_parser("profile", help="which fields a record has")
+    pr.add_argument("action", choices=["list", "show", "use", "check"])
+    pr.add_argument("name", nargs="?", help="built-in name or path to a .json profile")
+    pr.add_argument("--force", action="store_true",
+                    help="adopt it even though fields holding records would be dropped")
+    pr.set_defaults(func=cmd_profile)
 
     st = sub.add_parser("set", help="store a setting, e.g. set recorded_by 'A Naturalist'")
     st.add_argument("key")

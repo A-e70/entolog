@@ -1,15 +1,16 @@
 # entolog
 
-Turn a folder of insect photographs into a species record table.
+Turn a folder of photographs into a species record table, with the fields you
+decide on.
 
-The photograph already knows **when** and **where**. You only know **what**. So
-entolog reads the date and the position out of the EXIF, puts the picture in
-front of you, and takes the four things only you can supply: species, stage,
-sex, comments. Out comes the table.
+The photograph already knows **when** and **where**. You know **what**. So
+entolog reads the date and the position out of the EXIF, works out a grid
+reference, puts the picture in front of you, and takes the rest from you as fast
+as you can type it.
 
 ```
-filename,date,time,latitude,longitude,species,stage,sex,comments
-IMG_0421.jpg,2026-06-14,09:26:07,51.753792,-1.257281,Vespa crabro,adult,female,"on ivy, sunny bank"
+filename	date	time	latitude	longitude	species	stage	sex	comments
+IMG_0421.jpg	2026-06-14	09:26:07	51.753792	-1.257281	Vespa crabro	adult	female	on ivy, sunny bank
 ```
 
 ## Getting started
@@ -21,68 +22,108 @@ python3 -m entolog ~/photos/june-fieldwork     # reads the folder, opens the win
 That is the whole thing. It scans, then opens a page in your browser at
 `127.0.0.1`. Nothing is uploaded and nothing leaves the machine.
 
-Or one step at a time:
+One step at a time:
 
 ```bash
 python3 -m entolog scan ~/photos/june-fieldwork   # read the files
-python3 -m entolog annotate                       # determine them
-python3 -m entolog export -f csv -o records.csv   # write the table
+python3 -m entolog annotate                       # record them
+python3 -m entolog export -f tsv -o records.tsv   # write the table
 ```
 
-### Installing
+Nothing to install: standard library Python 3.9 or newer, no packages. For one
+file to copy onto a field laptop, run `./build.sh` and take `dist/entolog.pyz`.
 
-Nothing to install. It is standard library Python 3.9 or newer, no packages.
+Pillow is optional and only used to preview raw files (NEF, CR2, DNG) a browser
+cannot display. `exiftool` is optional too, as a second opinion on HEIC and on
+raws with unusual EXIF.
 
-If you would rather have one file to copy onto a field laptop, run `./build.sh`
-and take `dist/entolog.pyz`:
+## The fields are yours
+
+A **profile** says what a record contains. Everything is generated from it: the
+storage, the form in the window, the keyboard shortcuts, the autocomplete, the
+validation and the export columns. Adding a field is editing a JSON file.
 
 ```bash
-python3 entolog.pyz ~/photos/june-fieldwork
+python3 -m entolog profile list         # insects, wildlife, plants
+python3 -m entolog profile show > mine.json
+python3 -m entolog profile use mine.json
 ```
 
-Pillow is optional and only used to preview raw files (NEF, CR2, DNG) that a
-browser cannot display by itself. `exiftool` is also optional, and is used as a
-second opinion on HEIC and on raws with unusual EXIF.
+```json
+{
+  "name": "moths",
+  "title": "Light trap catch",
+  "primary": "taxon",
+  "fields": [
+    {"name": "taxon", "type": "text", "learn": true, "dwc": "scientificName"},
+    {"name": "count", "type": "number", "min": 1, "dwc": "individualCount"},
+    {"name": "trap", "type": "choice", "digits": true, "open": false,
+     "choices": ["actinic", "MV", "LED", "sugar", "net"]},
+    {"name": "retained", "type": "bool", "key": "r"},
+    {"name": "host_plant", "type": "text", "learn": true, "key": "h",
+     "dwc": "associatedTaxa"},
+    {"name": "notes", "type": "multiline", "dwc": "occurrenceRemarks"}
+  ],
+  "export": {"columns": ["filename", "date", "gridref", "taxon", "count", "trap", "notes"]}
+}
+```
 
-## The determination window
+| in a field | means |
+|---|---|
+| `type` | `text`, `choice`, `number`, `bool`, `date`, `multiline` |
+| `choices` | the options, for a choice field |
+| `open` | `false` to refuse anything not in the list |
+| `digits` | this field takes the number keys `1` to `9`. One field only |
+| `key` | a letter that cycles a choice, or jumps to a text field |
+| `learn` | remember what gets typed here and offer it back, most used first |
+| `required`, `min`, `max` | checks, reported without ever discarding what was typed |
+| `dwc` | the Darwin Core term this field exports as |
+| `help` | one line shown under the field |
+
+The profile is copied into the database, so a set of records always carries the
+definition it was made under. Switching to a profile that would orphan a field
+holding records is refused unless you pass `--force`, and even then the values
+stay in the database and come back if you switch back.
+
+Load a checklist into any field that learns:
+
+```bash
+python3 -m entolog terms species county-list.txt     # one name per line,
+python3 -m entolog terms host_plant plants.txt       # or "name<TAB>note"
+```
+
+## The window
 
 Left is the folder, grouped into **specimen events**. Consecutive shots taken
 within 150 seconds and 60 metres of each other are almost always the same
-individual, so they are grouped and you determine them once. `whole event` at
-the bottom right is on by default; turn it off for a photograph that caught
-something different.
+individual, so they are grouped and you record them once. `whole event` is on by
+default; turn it off for a photograph that caught something different.
 
-Middle is the photograph. Scroll to zoom, drag to pan, double click for 3x. Worth
-it when the difference is a tarsal segment.
+Middle is the photograph. Scroll to zoom, drag to pan, double click for 3x.
+Worth it when the difference is a tarsal segment.
 
-Right is the record. Everything saves as you type. There is no save button and
-closing the laptop loses nothing.
+Right is the record, built from your profile. Everything saves as you type.
+There is no save button and closing the laptop loses nothing.
 
 | key | does |
 |---|---|
-| `J` `K` | next photo, previous photo |
-| `Enter` | save and jump to the next undetermined one |
-| `D` | repeat the last determination, for a run of the same species |
-| `1`...`9` | stage |
-| `S` | cycle sex |
+| `J` `K` | next photograph, previous |
+| `Enter` | save and jump to the next one still to do |
+| `D` | repeat the last record, for a run of the same species |
+| `1`...`9` | whichever field has `digits` |
+| your letters | whatever `key` you gave each field |
 | `G` | whole event on or off |
 | `F` | flag for a second look |
-| `/` | jump to the species box |
+| `/` | jump to the primary field |
 | `E` | export |
-
-Species autocompletes from what you have already typed, most used first. To
-work against a checklist instead, one name per line:
-
-```bash
-python3 -m entolog species my-county-list.txt
-```
 
 ## Exports
 
 | format | for |
 |---|---|
-| `csv` | the plain table, the columns above |
-| `full` | adds altitude, camera, lens, confidence, event number |
+| `tsv` | the table, tab separated |
+| `csv` | the same columns, commas |
+| `full` | every column entolog holds, including locality and grid reference |
 | `dwc` | Darwin Core, the terms GBIF, iRecord and NBN Atlas expect |
 | `geojson` | drop straight onto a map |
 | `md` | markdown table to paste into notes |
@@ -93,42 +134,66 @@ python3 -m entolog export -f dwc -o occurrences.csv
 python3 -m entolog set recorded_by "A Naturalist"    # fills recordedBy and identifiedBy
 ```
 
-By default only determined photographs are exported. `--all` includes the rest.
+Only recorded photographs are exported. `--all` includes the rest. Every field
+with a `dwc` term appears in the Darwin Core export automatically, so your own
+fields travel with the record.
+
+## Locality and grid reference
+
+A satnav lookup gives back the whole postal hierarchy. A record wants the site
+and the county:
+
+```
+Wytham Woods, Wytham, Vale of White Horse, Oxfordshire, England, OX2 8QQ, United Kingdom
+                              becomes
+Wytham Woods, Oxfordshire
+```
+
+Grid references are calculated from the position, offline, and are exact against
+the Ordnance Survey test point (TG 51409 13177). Outside Britain the column is
+simply empty.
 
 ## What it does about the awkward cases
 
-**No GPS in the file.** Plenty of cameras have no receiver. The position columns
-are left empty rather than guessed, and the `no position` filter lists exactly
-which photographs need a grid reference adding by hand.
+**No GPS in the file.** The position columns are left empty rather than guessed,
+and the `no position` filter lists exactly which photographs need a grid
+reference adding by hand.
 
 **No EXIF date.** Falls back to the file's own timestamp, records that it did so
 in the `date_source` column, and shows it in amber in the window, so a record
-that rests on a weaker date is never silently mixed in with the rest.
+resting on a weaker date is never silently mixed in with the rest.
 
 **Raw files.** NEF, CR2, CR3, ARW, RAF, ORF, RW2, DNG and friends are read
-directly, since they are TIFF underneath. The preview uses Pillow or the JPEG the
-camera already embedded in the file.
+directly, since they are TIFF underneath.
 
 **Renamed or moved photographs.** Files are fingerprinted, so a photograph that
-moves folder or gets renamed carries its determination with it on the next scan.
+moves folder or gets renamed carries its whole record with it on the next scan.
 
-**Re-scanning.** Always safe. New files are added, everything already determined
-is left alone.
+**Re-scanning.** Always safe. New files are added, everything already recorded is
+left alone.
 
 **Southern and western hemispheres.** EXIF stores degrees and a separate N/S/E/W
 reference. Both are read, so Australia and Chile come out negative rather than
 mirrored, which is the classic way a record ends up in the wrong ocean.
 
+**A value that fails its own rule** is still stored. Losing what someone typed is
+worse than storing something odd, so the window shows the complaint and keeps the
+text.
+
 ## Files
 
 ```
-entolog/exifread.py   EXIF out of JPEG, TIFF raws, PNG, WebP. No dependencies.
+entolog/profile.py    what a record contains, and validating that
+entolog/profiles/     the built-in profiles
+entolog/records.py    reading and writing the recorder's own fields
+entolog/exifread.py   EXIF out of JPEG, TIFF raws, PNG, WebP. No dependencies
+entolog/locality.py   short locality from a verbose lookup, OSGB grid references
 entolog/scan.py       folder to database, fingerprints, specimen events
-entolog/db.py         SQLite schema
+entolog/db.py         SQLite schema and migration
 entolog/server.py     the local server, standard library only
-entolog/web/app.html  the whole interface, one file
-entolog/export.py     csv, Darwin Core, GeoJSON, JSON, markdown
-tests/                22 tests, no network, no camera needed
+entolog/web/app.html  the whole interface, one file, built from the profile
+entolog/export.py     tsv, csv, Darwin Core, GeoJSON, JSON, markdown
+tests/                48 tests, no network, no camera needed
 ```
 
 Everything lives in one SQLite file next to the photographs, `entolog.db`. It is

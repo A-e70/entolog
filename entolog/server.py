@@ -17,7 +17,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import db, export
+from . import db, export, records
+from . import profile as P
 
 def _app_html() -> str:
     """Read the UI out of the package, which also works from a zipapp bundle."""
@@ -103,58 +104,14 @@ def image_bytes(ctx: Ctx, row, size: str) -> tuple[bytes | None, str, Path | Non
     return None, mimetypes.guess_type(src.name)[0] or "application/octet-stream", src
 
 
-PHOTO_COLS = ("id, filename, rel_path, taken_at, taken_source, lat, lon, altitude, "
-              "orientation, camera, lens, width, height, group_id, seq, bytes, thumb_offset")
+def list_photos(cx, flt="all", q="", limit=5000, prof=None):
+    return records.list_photos(cx, prof or P.active(cx), flt, q, limit)
 
 
-def list_photos(cx, flt="all", q="", limit=5000):
-    where, args = [], []
-    if flt == "todo":
-        where.append("COALESCE(r.species,'')=''")
-    elif flt == "done":
-        where.append("COALESCE(r.species,'')!=''")
-    elif flt == "flagged":
-        where.append("COALESCE(r.flagged,0)=1")
-    elif flt == "nogps":
-        where.append("p.lat IS NULL")
-    if q:
-        where.append("(p.filename LIKE ?1 OR COALESCE(r.species,'') LIKE ?1 "
-                     "OR COALESCE(r.comments,'') LIKE ?1)")
-        args.append(f"%{q}%")
-    sql = (f"SELECT {','.join('p.' + c for c in PHOTO_COLS.replace(' ', '').split(','))}, "
-           "COALESCE(r.species,'') species, COALESCE(r.stage,'') stage, "
-           "COALESCE(r.sex,'') sex, COALESCE(r.comments,'') comments, "
-           "COALESCE(r.confidence,'') confidence, COALESCE(r.flagged,0) flagged "
-           "FROM photos p LEFT JOIN records r ON r.photo_id=p.id")
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += f" ORDER BY p.seq LIMIT {int(limit)}"
-    return [dict(r) for r in cx.execute(sql, args)]
-
-
-def save_record(cx, pid: int, fields: dict, apply_group=False) -> list[int]:
-    keys = [k for k in ("species", "stage", "sex", "comments", "confidence", "flagged")
-            if k in fields]
-    if not keys:
-        return []
-    targets = [pid]
-    if apply_group:
-        g = cx.execute("SELECT group_id FROM photos WHERE id=?", (pid,)).fetchone()
-        if g and g["group_id"] is not None:
-            targets = [r["id"] for r in cx.execute(
-                "SELECT id FROM photos WHERE group_id=?", (g["group_id"],))]
-    sets = ",".join(f"{k}=?" for k in keys)
-    vals = [fields[k] for k in keys]
-    for t in targets:
-        cx.execute("INSERT INTO records(photo_id) VALUES(?) ON CONFLICT(photo_id) DO NOTHING", (t,))
-        cx.execute(f"UPDATE records SET {sets}, updated_at=datetime('now') WHERE photo_id=?",
-                   (*vals, t))
-    name = (fields.get("species") or "").strip()
-    if name:
-        cx.execute("INSERT INTO species(name, uses) VALUES(?,1) "
-                   "ON CONFLICT(name) DO UPDATE SET uses=uses+1", (name,))
-    cx.commit()
-    return targets
+def save_record(cx, pid: int, fields: dict, apply_group=False) -> list:
+    """Kept for callers that just want to write fields and get the ids back."""
+    ids, _errors = records.save(cx, P.active(cx), pid, fields, apply_group=apply_group)
+    return ids
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -220,23 +177,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, html, "text/html; charset=utf-8",
                               {"Set-Cookie": f"entolog={self.ctx.token}; Path=/; SameSite=Strict"})
         if path == "/api/state":
-            n = cx.execute("SELECT COUNT(*) c FROM photos").fetchone()["c"]
-            d = cx.execute("SELECT COUNT(*) c FROM records WHERE species!=''").fetchone()["c"]
+            prof = P.active(cx)
             return self._json({
-                "total": n, "done": d, "vocab": db.vocab(cx),
+                **records.counts(cx, prof), "profile": prof,
                 "recorded_by": db.get_meta(cx, "recorded_by", ""),
                 "db": str(self.ctx.dbpath), "token": self.ctx.token,
-                "summary": export.summary(cx),
+                "summary": export.summary(cx, prof),
             })
         if path == "/api/photos":
             return self._json(list_photos(cx, qs.get("filter", ["all"])[0],
                                           qs.get("q", [""])[0]))
-        if path == "/api/species":
-            like = f"%{qs.get('q', [''])[0]}%"
-            rows = cx.execute(
-                "SELECT name, vernacular, family, uses FROM species WHERE name LIKE ? "
-                "OR vernacular LIKE ? ORDER BY uses DESC, name LIMIT 40", (like, like))
-            return self._json([dict(r) for r in rows])
+        if path == "/api/suggest":
+            return self._json(records.suggest(cx, qs.get("field", [""])[0],
+                                              qs.get("q", [""])[0]))
         m = re.fullmatch(r"/img/(\d+)", path)
         if m:
             row = cx.execute("SELECT * FROM photos WHERE id=?", (int(m.group(1)),)).fetchone()
@@ -269,20 +222,26 @@ class Handler(BaseHTTPRequestHandler):
         cx, body = self.ctx.cx, self._body()
         m = re.fullmatch(r"/api/record/(\d+)", u.path)
         if m:
-            ids = save_record(cx, int(m.group(1)), body,
-                              apply_group=bool(body.get("apply_group")))
-            return self._json({"saved": ids})
+            fields = body.get("values", {k: v for k, v in body.items()
+                                          if k != "apply_group"})
+            ids, errors = records.save(cx, P.active(cx), int(m.group(1)), fields,
+                                       apply_group=bool(body.get("apply_group")))
+            return self._json({"saved": ids, "errors": errors,
+                               **records.counts(cx, P.active(cx))})
+        if u.path == "/api/profile":
+            try:
+                prof = P.set_active(cx, body.get("profile"), force=bool(body.get("force")))
+            except P.ProfileError as e:
+                return self._send(400, str(e), "text/plain")
+            return self._json({"profile": prof})
         if u.path == "/api/meta":
             for k, v in body.items():
                 db.set_meta(cx, k, v)
             return self._json({"ok": True})
-        if u.path == "/api/species/import":
-            names = [n.strip() for n in (body.get("names") or "").splitlines() if n.strip()]
-            for n in names:
-                cx.execute("INSERT INTO species(name, from_list) VALUES(?,1) "
-                           "ON CONFLICT(name) DO UPDATE SET from_list=1", (n,))
-            cx.commit()
-            return self._json({"imported": len(names)})
+        if u.path == "/api/terms/import":
+            n = records.import_terms(cx, body.get("field", ""),
+                                     (body.get("names") or "").splitlines())
+            return self._json({"imported": n})
         return self._send(404, "not found", "text/plain")
 
     do_HEAD = do_GET

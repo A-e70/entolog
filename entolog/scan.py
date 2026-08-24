@@ -10,7 +10,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from . import exifread
+from . import exifread, locality
 
 IMAGE_EXT = {
     ".jpg", ".jpeg", ".jpe", ".png", ".tif", ".tiff", ".webp", ".heic", ".heif",
@@ -29,6 +29,11 @@ def fingerprint(path: Path, size: int) -> str:
             fh.seek(-65_536, os.SEEK_END)
             h.update(fh.read(65_536))
     return h.hexdigest()[:24]
+
+
+def place_key(lat: float, lon: float, dp: int = 4) -> str:
+    """Positions rounded to about 10 m. One lookup then covers a whole burst."""
+    return f"{lat:.{dp}f},{lon:.{dp}f}"
 
 
 def haversine_m(a_lat, a_lon, b_lat, b_lon) -> float:
@@ -108,6 +113,8 @@ def scan(cx, roots, recursive=True, gap_seconds=150, progress=None) -> dict:
                 lens=ex.get("lens"), width=ex.get("width"), height=ex.get("height"),
                 thumb_offset=ex.get("thumb_offset"), thumb_length=ex.get("thumb_length"),
                 exif=json.dumps(ex, default=str),
+                gridref=(locality.osgb_gridref(ex["lat"], ex["lon"])
+                         if ex.get("lat") is not None else None),
             )
             cols = ",".join(vals)
             cx.execute(
@@ -115,18 +122,26 @@ def scan(cx, roots, recursive=True, gap_seconds=150, progress=None) -> dict:
                 f"ON CONFLICT(path) DO UPDATE SET {','.join(f'{c}=excluded.{c}' for c in vals)}",
                 tuple(vals.values()))
             pid = cx.execute("SELECT id FROM photos WHERE path=?", (p,)).fetchone()["id"]
-            # A file that moved or was renamed keeps the determination typed against it.
-            old = cx.execute(
-                "SELECT r.* FROM records r JOIN photos ph ON ph.id=r.photo_id "
-                "WHERE ph.fingerprint=? AND ph.id!=? AND r.species!='' LIMIT 1", (fp, pid)).fetchone()
-            if old:
-                cx.execute(
-                    "INSERT INTO records(photo_id,species,stage,sex,comments,confidence,updated_at) "
-                    "VALUES(?,?,?,?,?,?,datetime('now')) ON CONFLICT(photo_id) DO NOTHING",
-                    (pid, old["species"], old["stage"], old["sex"], old["comments"], old["confidence"]))
+            # A file that moved or was renamed keeps the record typed against it,
+            # whatever fields that record happens to have.
+            donor = cx.execute(
+                "SELECT fv.field, fv.value FROM field_values fv "
+                "JOIN photos ph ON ph.id=fv.photo_id "
+                "WHERE ph.fingerprint=? AND ph.id!=? AND fv.value!=''", (fp, pid)).fetchall()
+            if donor:
+                for d in donor:
+                    cx.execute(
+                        "INSERT INTO field_values(photo_id, field, value, updated_at) "
+                        "VALUES(?,?,?,datetime('now')) "
+                        "ON CONFLICT(photo_id, field) DO NOTHING",
+                        (pid, d["field"], d["value"]))
                 moved += 1
-            cx.execute("INSERT INTO records(photo_id,species) VALUES(?,'') "
-                       "ON CONFLICT(photo_id) DO NOTHING", (pid,))
+            if ex.get("lat") is not None:
+                place = cx.execute("SELECT verbose, short FROM places WHERE key=?",
+                                   (place_key(ex["lat"], ex["lon"]),)).fetchone()
+                if place:
+                    cx.execute("UPDATE photos SET locality=?, locality_full=? WHERE id=?",
+                               (place["short"], place["verbose"], pid))
             if existing:
                 updated += 1
             else:

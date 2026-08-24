@@ -1,39 +1,51 @@
 # entolog
 
-Photographs of insects to a species record table. Written for an entomologist,
-not for a developer, so two rules come before anything else.
+Photographs to a species record table, for recorders rather than developers.
+Three rules come before anything else.
 
-1. **No dependencies.** Standard library Python only, on any machine with 3.9 or
-   newer. Pillow and exiftool are optional preview helpers and every code path
-   must still work when both are absent. Do not add a framework, a bundler or a
-   package to make something a little nicer.
-2. **Never lose or invent a record.** Scans are idempotent, determinations
-   survive a renamed file through the fingerprint, and anything uncertain is
-   labelled rather than filled in. A missing position stays empty. A date that
-   came from the filesystem instead of the EXIF is marked `file-mtime` and shown
+1. **No dependencies.** Standard library Python only, 3.9 or newer. Pillow and
+   exiftool are optional preview helpers and every path must still work when both
+   are absent. Do not add a framework, a bundler or a package to make something a
+   little nicer.
+2. **Never lose or invent a record.** Scans are idempotent, records survive a
+   renamed file through the fingerprint, a value that fails validation is stored
+   anyway with the complaint shown, and switching profile never deletes values.
+   Anything uncertain is labelled rather than filled in: a missing position stays
+   empty, a date that came from the filesystem is marked `file-mtime` and shown
    in amber.
+3. **Nothing downstream may know what the fields are.** Fields come from the
+   active profile. If you find yourself writing `species` or `stage` anywhere
+   outside `profiles/*.json` and the tests, it is wrong. The one exception is the
+   `_flag` built-in, kept apart by a leading underscore that profiles cannot use.
 
 ## Shape
 
-`cli.py` is the only entry point. `scan.py` writes photo rows and clusters them
-into specimen events (150 s and 60 m). `server.py` is a `ThreadingHTTPServer`
-that serves `web/app.html` plus a small JSON API, binds 127.0.0.1 and requires a
-per-run token. `export.py` renders the table. State is one SQLite file beside the
-photographs.
+`profile.py` defines and validates what a record contains. `records.py` reads and
+writes values through it. `scan.py` writes photo rows and clusters them into
+specimen events (150 s, 60 m). `server.py` is a `ThreadingHTTPServer` serving
+`web/app.html` plus a JSON API, bound to 127.0.0.1 behind a per-run token.
+`export.py` renders the table, taking its columns and its Darwin Core terms from
+the profile. `locality.py` shortens a verbose reverse geocode and computes OSGB
+grid references offline.
 
-The UI is a single HTML file with no build step. It reads the app through
-`importlib.resources`, so the zipapp built by `build.sh` works too. If you move
-that file, keep both paths working.
+Values live in `field_values(photo_id, field, value)`, one row per field, so a
+new field is data rather than a migration. The active profile is stored in `meta`
+so a database is self describing. `db._carry_over` moves 1.0 records out of the
+old fixed columns on first open; the old `records` table is deliberately left in
+place as a safety net.
 
-Determinations are stored per photo even when applied to a whole event, so
-ungrouping later never loses anything.
+The UI is a single HTML file with no build step, and builds its form, its
+keyboard shortcuts and its help from `/api/state`. It reads itself through
+`importlib.resources`, so the zipapp from `build.sh` works too.
 
 ## Before claiming it works
 
-`python3 -m unittest discover -s tests` covers EXIF parsing, hemisphere signs,
-grouping, moved files, saving and every export format. The tests build their own
-JPEGs, so they need no camera and no Pillow.
+`python3 -m unittest discover -s tests` is 48 tests: EXIF parsing, hemisphere
+signs, grouping, moved files, profile validation, custom fields the code has
+never seen, the 1.0 migration and every export format. They build their own
+JPEGs, so no camera and no Pillow.
 
-The interface needs a real browser: `bd inspect "http://127.0.0.1:8731/?t=TOKEN"`
-after starting a server with `ENTOLOG_TOKEN` set. Console errors there do not
-show up in the Python tests.
+The window needs a real browser. Start a server with `ENTOLOG_TOKEN` set, then
+`bd inspect "http://127.0.0.1:8731/?t=TOKEN"`. Console errors do not show up in
+the Python tests. Test it against a profile that is **not** the default, or you
+are only testing the insect fields.

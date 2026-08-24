@@ -1,0 +1,22 @@
+{
+  "name": "wildlife",
+  "title": "General biodiversity records",
+  "primary": "species",
+  "fields": [
+    {"name": "species", "type": "text", "learn": true, "primary": true, "dwc": "scientificName"},
+    {"name": "count", "type": "number", "min": 1, "dwc": "individualCount",
+     "help": "number of individuals seen"},
+    {"name": "stage", "type": "choice", "digits": true, "dwc": "lifeStage",
+     "choices": ["adult", "immature", "juvenile", "larva", "egg", "unknown"]},
+    {"name": "sex", "type": "choice", "key": "x", "dwc": "sex",
+     "choices": ["", "male", "female", "mixed", "unknown"]},
+    {"name": "behaviour", "type": "text", "learn": true, "key": "b", "dwc": "behavior"},
+    {"name": "habitat", "type": "text", "learn": true, "key": "h", "dwc": "habitat"},
+    {"name": "determiner", "type": "text", "learn": true, "dwc": "identifiedBy"},
+    {"name": "comments", "type": "multiline", "dwc": "occurrenceRemarks"}
+  ],
+  "export": {
+    "columns": ["filename", "date", "time", "latitude", "longitude", "locality",
+                "species", "count", "stage", "sex", "behaviour", "habitat", "comments"]
+  }
+}

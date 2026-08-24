@@ -1,0 +1,19 @@
+{
+  "name": "plants",
+  "title": "Plant records",
+  "primary": "species",
+  "fields": [
+    {"name": "species", "type": "text", "learn": true, "primary": true, "dwc": "scientificName"},
+    {"name": "abundance", "type": "choice", "digits": true, "open": false,
+     "dwc": "organismQuantity",
+     "choices": ["dominant", "abundant", "frequent", "occasional", "rare"]},
+    {"name": "phenology", "type": "choice", "key": "p", "dwc": "reproductiveCondition",
+     "choices": ["", "vegetative", "in bud", "flowering", "fruiting", "senescent"]},
+    {"name": "habitat", "type": "text", "learn": true, "key": "h", "dwc": "habitat"},
+    {"name": "comments", "type": "multiline", "dwc": "occurrenceRemarks"}
+  ],
+  "export": {
+    "columns": ["filename", "date", "time", "latitude", "longitude", "gridref",
+                "species", "abundance", "phenology", "habitat", "comments"]
+  }
+}

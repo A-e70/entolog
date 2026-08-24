@@ -96,11 +96,13 @@ main{display:grid;grid-template-columns:232px 1fr 340px;min-height:0}
 label.f{display:block;margin:0 0 12px}
 label.f>span{display:block;font-size:12px;color:var(--dim);margin-bottom:4px;
   text-transform:uppercase;letter-spacing:.05em}
-input[type=text],textarea{
+input[type=text],input[type=number],input[type=date],textarea{
   width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
   padding:7px 10px;outline:none
 }
-input[type=text]:focus,textarea:focus{border-color:var(--accent)}
+input[type=text]:focus,input[type=number]:focus,input[type=date]:focus,
+textarea:focus{border-color:var(--accent)}
+input[type=number]{-moz-appearance:textfield;width:120px}
 textarea{resize:vertical;min-height:64px}
 .opts{display:flex;flex-wrap:wrap;gap:5px}
 .opt{
@@ -143,12 +145,23 @@ dialog h3{margin:0 0 10px}
 .exp a small{color:var(--dim);text-align:right}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-thumb{background:#2b3543;border-radius:9px}
+
+.lab{display:block;font-size:12px;color:var(--dim);margin-bottom:4px;
+  text-transform:uppercase;letter-spacing:.05em}
+.lab kbd{text-transform:none;letter-spacing:0;background:var(--panel2);
+  border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;
+  padding:0 5px;font:11px ui-monospace,monospace;color:var(--dim);margin-left:4px}
+.f{display:block;margin:0 0 14px}
+.err{color:#f0883e;font-size:12px;margin-top:4px}
+.prof{color:var(--dim);font-size:12px;border:1px solid var(--line);
+  border-radius:99px;padding:3px 10px;white-space:nowrap}
+.hint{color:var(--dim);font-size:11px;margin-top:3px}
 </style>
 </head>
 <body>
 <header>
   <div class="brand">ento<span>log</span></div>
-  <div class="progress" title="determined"><i id="bar"></i></div>
+  <div class="progress" title="recorded"><i id="bar"></i></div>
   <div class="count" id="count">loading</div>
   <div class="chips" id="filters">
     <button class="chip" data-f="todo">to do</button>
@@ -157,8 +170,9 @@ dialog h3{margin:0 0 10px}
     <button class="chip" data-f="flagged">flagged</button>
     <button class="chip" data-f="nogps">no position</button>
   </div>
-  <input id="search" type="text" placeholder="filter by name or note">
+  <input id="search" type="text" placeholder="filter by any field">
   <div class="spacer"></div>
+  <span class="prof" id="prof"></span>
   <button class="btn" id="exportBtn">Export</button>
 </header>
 
@@ -171,15 +185,16 @@ dialog h3{margin:0 0 10px}
 <dialog id="exportDlg">
   <h3>Export the table</h3>
   <div class="exp">
-    <a href="#" data-fmt="csv"><span>Spreadsheet CSV</span><small>filename, date, position,<br>species, stage, sex, comments</small></a>
-    <a href="#" data-fmt="full"><span>CSV, every column</span><small>adds camera, altitude,<br>group, confidence</small></a>
+    <a href="#" data-fmt="csv"><span>Spreadsheet CSV</span><small id="colHint"></small></a>
+    <a href="#" data-fmt="tsv"><span>Tab separated</span><small>the same columns,<br>tabs instead of commas</small></a>
+    <a href="#" data-fmt="full"><span>CSV, every column</span><small>adds locality, grid reference,<br>camera, altitude, event</small></a>
     <a href="#" data-fmt="dwc"><span>Darwin Core</span><small>ready for GBIF,<br>iRecord, NBN Atlas</small></a>
     <a href="#" data-fmt="geojson"><span>GeoJSON</span><small>drop onto a map</small></a>
     <a href="#" data-fmt="json"><span>JSON</span><small>everything, raw</small></a>
     <a href="#" data-fmt="md"><span>Markdown table</span><small>paste into notes</small></a>
   </div>
   <div class="row" style="margin-top:14px">
-    <label><input type="checkbox" id="expAll"> include undetermined photos</label>
+    <label><input type="checkbox" id="expAll"> include photographs with no record yet</label>
     <div class="spacer"></div>
     <button class="btn" onclick="exportDlg.close()">Close</button>
   </div>
@@ -187,21 +202,32 @@ dialog h3{margin:0 0 10px}
 
 <script>
 const $ = s => document.querySelector(s);
-const api = (p, o) => fetch(p, o).then(r => r.ok ? (r.headers.get('content-type')||'').includes('json') ? r.json() : r.text() : Promise.reject(r.status));
-const S = {photos: [], i: 0, filter: 'todo', q: '', vocab: {}, last: null, group: true, zoom: 1, ox: 0, oy: 0};
-const esc = s => (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api = (p, o) => fetch(p, o).then(r => r.ok
+  ? ((r.headers.get('content-type') || '').includes('json') ? r.json() : r.text())
+  : r.text().then(t => Promise.reject(t)));
+const S = {photos: [], i: 0, filter: 'todo', q: '', prof: null, last: null,
+           group: true, zoom: 1, ox: 0, oy: 0, errors: {}};
+const esc = s => (s ?? '').toString().replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const cur = () => S.photos[S.i];
+const FIELDS = () => S.prof.fields;
+const PRIMARY = () => S.prof.primary;
+const val = (p, n) => (p && p.values && p.values[n]) || '';
+const digitField = () => FIELDS().find(f => f.digits);
+const keyField = k => FIELDS().find(f => f.key === k);
 
 async function boot(){
   const st = await api('/api/state');
-  S.vocab = st.vocab; S.total = st.total; S.done = st.done;
+  S.prof = st.profile; S.total = st.total; S.done = st.done;
+  $('#prof').textContent = st.profile.title || st.profile.name;
+  $('#prof').title = 'fields: ' + FIELDS().map(f => f.name).join(', ');
+  $('#colHint').innerHTML = esc(S.prof.export.columns.join(', '));
   document.title = `entolog ${st.done}/${st.total}`;
   await load();
 }
 
 async function load(keepId){
-  const p = new URLSearchParams({filter: S.filter, q: S.q});
-  S.photos = await api('/api/photos?' + p);
+  S.photos = await api('/api/photos?' + new URLSearchParams({filter: S.filter, q: S.q}));
   if (keepId){ const j = S.photos.findIndex(x => x.id === keepId); if (j >= 0) S.i = j; }
   if (S.i >= S.photos.length) S.i = Math.max(0, S.photos.length - 1);
   drawStrip(); show();
@@ -210,25 +236,26 @@ async function load(keepId){
 }
 
 function counts(){
-  const st = S.photos.filter(p => p.species).length;
-  $('#count').textContent = `${S.done}/${S.total} determined`;
+  $('#count').textContent = `${S.done}/${S.total} recorded`;
   $('#bar').style.width = (S.total ? 100 * S.done / S.total : 0) + '%';
 }
 
 /* ---------- filmstrip, grouped by specimen event ---------- */
 function drawStrip(){
   const strip = $('#strip');
-  if (!S.photos.length){ strip.innerHTML = '<div class="empty">no photos here</div>'; counts(); return; }
+  if (!S.photos.length){ strip.innerHTML = '<div class="empty">no photographs here</div>'; counts(); return; }
   let html = '', g = null, open = false;
   S.photos.forEach((p, i) => {
     if (p.group_id !== g){
       if (open) html += '</div>';
       g = p.group_id; open = true;
       const n = S.photos.filter(x => x.group_id === g).length;
-      html += `<div class="ghead"><span>${esc((p.taken_at||'').replace('T',' ').slice(0,16))}</span><span>${n} shot${n>1?'s':''}</span></div><div class="tiles">`;
+      html += `<div class="ghead"><span>${esc((p.taken_at || '').replace('T', ' ').slice(0, 16))}</span><span>${n} shot${n > 1 ? 's' : ''}</span></div><div class="tiles">`;
     }
-    const rot = (p.thumb_offset && p.orientation > 1) ? ` style="transform:rotate(${({3:180,6:90,8:270})[p.orientation]||0}deg)"` : '';
-    html += `<div class="tile${i===S.i?' sel':''}${p.species?' done':''}${p.flagged?' flag':''}" data-i="${i}" title="${esc(p.filename)}${p.species?' — '+esc(p.species):''}">
+    const rot = (p.thumb_offset && p.orientation > 1)
+      ? ` style="transform:rotate(${({3:180,6:90,8:270})[p.orientation] || 0}deg)"` : '';
+    const done = val(p, PRIMARY());
+    html += `<div class="tile${i === S.i ? ' sel' : ''}${done ? ' done' : ''}${p.flagged ? ' flag' : ''}" data-i="${i}" title="${esc(p.filename)}${done ? ' — ' + esc(done) : ''}">
       <img loading="lazy" src="/img/${p.id}?size=thumb"${rot} alt="">
       <span class="dot"></span><span class="nm">${esc(p.filename)}</span></div>`;
   });
@@ -241,28 +268,32 @@ function drawStrip(){
 function markTile(){
   const p = cur(); if (!p) return;
   const t = $(`#strip .tile[data-i="${S.i}"]`);
-  if (t){ t.classList.toggle('done', !!p.species); t.classList.toggle('flag', !!p.flagged);
-          t.title = p.filename + (p.species ? ' — ' + p.species : ''); }
+  if (t){
+    const done = val(p, PRIMARY());
+    t.classList.toggle('done', !!done);
+    t.classList.toggle('flag', !!p.flagged);
+    t.title = p.filename + (done ? ' — ' + done : '');
+  }
 }
 
 function select(i){
   if (i < 0 || i >= S.photos.length) return;
   document.querySelector('#strip .tile.sel')?.classList.remove('sel');
-  S.i = i;
+  S.i = i; S.errors = {};
   const t = $(`#strip .tile[data-i="${i}"]`);
-  if (t){ t.classList.add('sel'); t.scrollIntoView({block:'nearest'}); }
+  if (t){ t.classList.add('sel'); t.scrollIntoView({block: 'nearest'}); }
   show();
 }
 
 /* ---------- photo stage with pan and zoom ---------- */
 function show(){
   const p = cur(), stage = $('#stage');
-  if (!p){ stage.innerHTML = '<div class="empty">nothing here. Try another filter.</div>'; $('#side').innerHTML=''; return; }
+  if (!p){ stage.innerHTML = '<div class="empty">nothing here. Try another filter.</div>'; $('#side').innerHTML = ''; return; }
   S.zoom = 1; S.ox = 0; S.oy = 0;
   stage.classList.remove('zoomed');
   stage.innerHTML = `<img id="big" src="/img/${p.id}?size=full" alt="${esc(p.filename)}">
-    <div class="hud"><b>${S.i+1}</b> of ${S.photos.length}
-      <span>&middot;</span><span>${p.width&&p.height?p.width+'&times;'+p.height:''}</span>
+    <div class="hud"><b>${S.i + 1}</b> of ${S.photos.length}
+      <span>&middot;</span><span>${p.width && p.height ? p.width + '&times;' + p.height : ''}</span>
       <span>&middot;</span><span id="zl">fit</span></div>`;
   drawSide();
 }
@@ -282,8 +313,8 @@ function zoomAt(factor, cx, cy){
   S.zoom = z; if (z === 1){ S.ox = S.oy = 0; }
   applyZoom();
 }
-$('#stage').addEventListener('wheel', e => { e.preventDefault(); zoomAt(e.deltaY < 0 ? 1.18 : 1/1.18, e.clientX, e.clientY); }, {passive:false});
-$('#stage').addEventListener('dblclick', e => zoomAt(S.zoom > 1 ? 1/S.zoom : 3, e.clientX, e.clientY));
+$('#stage').addEventListener('wheel', e => { e.preventDefault(); zoomAt(e.deltaY < 0 ? 1.18 : 1 / 1.18, e.clientX, e.clientY); }, {passive: false});
+$('#stage').addEventListener('dblclick', e => zoomAt(S.zoom > 1 ? 1 / S.zoom : 3, e.clientX, e.clientY));
 $('#stage').addEventListener('pointerdown', e => {
   if (S.zoom === 1) return;
   const sx = e.clientX - S.ox, sy = e.clientY - S.oy;
@@ -293,58 +324,66 @@ $('#stage').addEventListener('pointerdown', e => {
   st.addEventListener('pointermove', mv); st.addEventListener('pointerup', up);
 });
 
-/* ---------- the record form ---------- */
-function optRow(field, list, val){
-  return `<div class="opts">` + list.map((o, n) => {
-    const lab = o === '' ? 'none' : o;
-    const key = field === 'stage' && n < 9 ? `<kbd>${n+1}</kbd>` : '';
-    return `<button class="opt${(val||'')===o?' on':''}" data-field="${field}" data-val="${esc(o)}">${esc(lab)}${key}</button>`;
-  }).join('') + `</div>`;
+/* ---------- the record form, built from the profile ---------- */
+function fieldHTML(f, p){
+  const v = val(p, f.name);
+  const err = S.errors[f.name] ? `<div class="err">${esc(S.errors[f.name])}</div>` : '';
+  const hint = f.help ? `<div class="hint">${esc(f.help)}</div>` : '';
+  const key = f.key ? ` <kbd>${esc(f.key.toUpperCase())}</kbd>` : '';
+  const lab = `<span class="lab">${esc(f.label)}${key}${f.required ? ' *' : ''}</span>`;
+  if (f.type === 'choice' || f.type === 'bool'){
+    const opts = (f.choices || []).map((o, n) => {
+      const shown = o === '' ? 'none' : o;
+      const kb = f.digits && n < 9 ? `<kbd>${n + 1}</kbd>` : '';
+      return `<button class="opt${v === o ? ' on' : ''}" data-field="${esc(f.name)}" data-val="${esc(o)}">${esc(shown)}${kb}</button>`;
+    }).join('');
+    return `<div class="f">${lab}<div class="opts">${opts}</div>${err}${hint}</div>`;
+  }
+  if (f.type === 'multiline')
+    return `<label class="f">${lab}<textarea data-field="${esc(f.name)}" spellcheck="true" placeholder="${esc(f.help)}">${esc(v)}</textarea>${err}</label>`;
+  const type = f.type === 'number' ? 'number' : (f.type === 'date' ? 'date' : 'text');
+  return `<label class="f${f.learn ? ' ac' : ''}">${lab}
+    <input type="${type}" data-field="${esc(f.name)}" data-learn="${f.learn ? 1 : 0}"
+      autocomplete="off" spellcheck="false" value="${esc(v)}" placeholder="${esc(f.help || '')}">
+    ${f.learn ? `<div class="aclist" id="ac-${esc(f.name)}" hidden></div>` : ''}${err}</label>`;
 }
 
 function drawSide(){
-  const p = cur(), v = S.vocab;
-  const pos = (p.lat != null) ? `<a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=17/${p.lat}/${p.lon}" target="_blank" rel="noopener">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</a>` : '<span class="est">none in the file</span>';
+  const p = cur();
+  const pos = (p.lat != null)
+    ? `<a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=17/${p.lat}/${p.lon}" target="_blank" rel="noopener">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</a>`
+    : '<span class="est">none in the file</span>';
   const gsize = S.photos.filter(x => x.group_id === p.group_id).length;
   $('#side').innerHTML = `
   <div class="meta">
     <div class="fn">${esc(p.filename)}</div>
     <dl class="kv">
-      <dt>date</dt><dd class="${p.taken_source!=='exif'?'est':''}">${esc((p.taken_at||'').replace('T',' ').slice(0,19))}${p.taken_source!=='exif'?' (file date)':''}</dd>
+      <dt>date</dt><dd class="${p.taken_source !== 'exif' ? 'est' : ''}">${esc((p.taken_at || '').replace('T', ' ').slice(0, 19))}${p.taken_source !== 'exif' ? ' (file date)' : ''}</dd>
       <dt>position</dt><dd>${pos}</dd>
-      ${p.altitude!=null?`<dt>altitude</dt><dd>${p.altitude} m</dd>`:''}
-      ${p.camera?`<dt>camera</dt><dd>${esc(p.camera)}</dd>`:''}
-      ${p.lens?`<dt>lens</dt><dd>${esc(p.lens)}</dd>`:''}
-      <dt>folder</dt><dd>${esc(p.rel_path.includes('/')?p.rel_path.split('/').slice(0,-1).join('/'):'.')}</dd>
+      ${p.locality ? `<dt>locality</dt><dd>${esc(p.locality)}</dd>` : ''}
+      ${p.gridref ? `<dt>grid ref</dt><dd>${esc(p.gridref)}</dd>` : ''}
+      ${p.altitude != null ? `<dt>altitude</dt><dd>${p.altitude} m</dd>` : ''}
+      ${p.camera ? `<dt>camera</dt><dd>${esc(p.camera)}</dd>` : ''}
+      ${p.lens ? `<dt>lens</dt><dd>${esc(p.lens)}</dd>` : ''}
     </dl>
   </div>
-
-  <label class="f ac"><span>species</span>
-    <input type="text" id="species" autocomplete="off" spellcheck="false" value="${esc(p.species)}" placeholder="start typing">
-    <div class="aclist" id="aclist" hidden></div>
-  </label>
-  <label class="f"><span>stage</span></label>${optRow('stage', v.stage, p.stage)}
-  <label class="f" style="margin-top:12px"><span>sex</span></label>${optRow('sex', v.sex, p.sex)}
-  <label class="f" style="margin-top:12px"><span>confidence</span></label>${optRow('confidence', v.confidence, p.confidence)}
-  <label class="f" style="margin-top:12px"><span>comments</span>
-    <textarea id="comments" spellcheck="true" placeholder="habitat, host plant, behaviour, how it was determined">${esc(p.comments)}</textarea>
-  </label>
+  ${FIELDS().map(f => fieldHTML(f, p)).join('')}
   <div class="row">
-    <label title="apply to every shot in this burst"><input type="checkbox" id="grp" ${S.group?'checked':''}> whole event (${gsize})</label>
+    <label title="apply to every shot in this burst"><input type="checkbox" id="grp" ${S.group ? 'checked' : ''}> whole event (${gsize})</label>
     <div class="spacer"></div>
-    <button class="btn" id="flagBtn">${p.flagged?'unflag':'flag'}</button>
+    <button class="btn" id="flagBtn">${p.flagged ? 'unflag' : 'flag'}</button>
     <span class="saved" id="savedMsg">saved</span>
   </div>
   <div class="help">
-    <kbd>J</kbd><span>next photo</span>
+    <kbd>J</kbd><span>next photograph</span>
     <kbd>K</kbd><span>previous</span>
-    <kbd>Enter</kbd><span>save and go to the next undetermined</span>
-    <kbd>D</kbd><span>repeat the last determination</span>
-    <kbd>1..9</kbd><span>stage</span>
-    <kbd>S</kbd><span>cycle sex</span>
+    <kbd>Enter</kbd><span>save and go to the next one to do</span>
+    <kbd>D</kbd><span>repeat the last record</span>
+    ${digitField() ? `<kbd>1..9</kbd><span>${esc(digitField().label)}</span>` : ''}
+    ${FIELDS().filter(f => f.key).map(f => `<kbd>${esc(f.key.toUpperCase())}</kbd><span>${f.type === 'choice' ? 'cycle ' : 'jump to '}${esc(f.label)}</span>`).join('')}
     <kbd>G</kbd><span>whole event on or off</span>
     <kbd>F</kbd><span>flag for a second look</span>
-    <kbd>/</kbd><span>jump to species</span>
+    <kbd>/</kbd><span>jump to ${esc(PRIMARY())}</span>
     <kbd>wheel</kbd><span>zoom, drag to pan</span>
   </div>`;
   wireSide();
@@ -353,109 +392,131 @@ function drawSide(){
 function wireSide(){
   const p = cur();
   $('#grp').onchange = e => S.group = e.target.checked;
-  $('#flagBtn').onclick = () => save({flagged: p.flagged ? 0 : 1}, false);
-  $('#comments').onchange = e => save({comments: e.target.value});
+  $('#flagBtn').onclick = () => save({_flag: p.flagged ? '' : '1'}, false);
   document.querySelectorAll('#side .opt').forEach(b => b.onclick = () => {
     const f = b.dataset.field;
-    save({[f]: b.dataset.val === p[f] ? '' : b.dataset.val});
+    save({[f]: b.dataset.val === val(p, f) ? '' : b.dataset.val});
   });
-  autocomplete();
+  document.querySelectorAll('#side textarea[data-field]').forEach(t =>
+    t.onchange = e => save({[t.dataset.field]: e.target.value}, false));
+  document.querySelectorAll('#side input[data-field]').forEach(inp => {
+    if (inp.dataset.learn === '1') autocomplete(inp);
+    else inp.onchange = e => save({[inp.dataset.field]: e.target.value}, false);
+  });
 }
 
-function autocomplete(){
-  const inp = $('#species'), list = $('#aclist');
+function autocomplete(inp){
+  const name = inp.dataset.field, list = $('#ac-' + name);
   let items = [], sel = -1, timer;
   const close = () => { list.hidden = true; sel = -1; };
   const paint = () => {
     list.innerHTML = items.map((s, n) =>
-      `<div class="${n===sel?'on':''}" data-n="${n}">${esc(s.name)}${s.vernacular?`<small>${esc(s.vernacular)}</small>`:''}${s.uses?`<small>${s.uses}</small>`:''}</div>`).join('');
+      `<div class="${n === sel ? 'on' : ''}" data-n="${n}">${esc(s.value)}${s.note ? `<small>${esc(s.note)}</small>` : ''}${s.uses ? `<small>${s.uses}</small>` : ''}</div>`).join('');
     list.hidden = !items.length;
   };
-  const pick = n => { if (items[n]){ inp.value = items[n].name; close(); save({species: inp.value}); } };
+  const pick = n => { if (items[n]){ inp.value = items[n].value; close(); save({[name]: inp.value}); } };
   list.onmousedown = e => { const d = e.target.closest('[data-n]'); if (d){ e.preventDefault(); pick(+d.dataset.n); } };
   inp.oninput = () => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       const q = inp.value.trim();
       if (!q){ close(); return; }
-      items = await api('/api/species?q=' + encodeURIComponent(q));
+      items = await api(`/api/suggest?field=${encodeURIComponent(name)}&q=${encodeURIComponent(q)}`);
       sel = -1; paint();
     }, 130);
   };
   inp.onkeydown = e => {
     if (list.hidden){
-      if (e.key === 'Enter'){ e.preventDefault(); save({species: inp.value.trim()}); nextTodo(); }
+      if (e.key === 'Enter'){ e.preventDefault(); save({[name]: inp.value.trim()}); if (name === PRIMARY()) nextTodo(); }
       return;
     }
-    if (e.key === 'ArrowDown'){ e.preventDefault(); sel = Math.min(items.length-1, sel+1); paint(); }
-    else if (e.key === 'ArrowUp'){ e.preventDefault(); sel = Math.max(0, sel-1); paint(); }
-    else if (e.key === 'Enter'){ e.preventDefault(); sel >= 0 ? pick(sel) : (save({species: inp.value.trim()}), close(), nextTodo()); }
+    if (e.key === 'ArrowDown'){ e.preventDefault(); sel = Math.min(items.length - 1, sel + 1); paint(); }
+    else if (e.key === 'ArrowUp'){ e.preventDefault(); sel = Math.max(0, sel - 1); paint(); }
+    else if (e.key === 'Enter'){ e.preventDefault(); sel >= 0 ? pick(sel) : (save({[name]: inp.value.trim()}), close(), name === PRIMARY() && nextTodo()); }
     else if (e.key === 'Escape'){ close(); }
   };
-  inp.onblur = () => { close(); if (inp.value.trim() !== cur().species) save({species: inp.value.trim()}); };
+  inp.onblur = () => { close(); if (inp.value.trim() !== val(cur(), name)) save({[name]: inp.value.trim()}, false); };
 }
 
 /* ---------- saving ---------- */
 let saveSeq = 0;
 async function save(fields, redraw = true){
   const p = cur(); if (!p) return;
-  const before = !!p.species;
-  Object.assign(p, fields);
+  const flag = '_flag' in fields;
+  p.values = p.values || {};
+  for (const [k, v] of Object.entries(fields)){
+    if (k === '_flag') p.flagged = v ? 1 : 0; else p.values[k] = v;
+  }
   const grp = S.group && $('#grp')?.checked;
   const my = ++saveSeq;
-  const res = await api('/api/record/' + p.id, {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({...fields, apply_group: grp})
-  });
+  let res;
+  try {
+    res = await api('/api/record/' + p.id, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({values: fields, apply_group: grp})
+    });
+  } catch (e){ S.errors = {_: String(e)}; drawSide(); return; }
   if (grp && res.saved.length > 1){
     const ids = new Set(res.saved);
-    S.photos.forEach(x => { if (ids.has(x.id)) Object.assign(x, fields); });
+    S.photos.forEach(x => {
+      if (!ids.has(x.id)) return;
+      x.values = x.values || {};
+      for (const [k, v] of Object.entries(fields)){
+        if (k === '_flag') x.flagged = v ? 1 : 0; else x.values[k] = v;
+      }
+    });
   }
-  if (fields.species !== undefined || grp) recount();
-  else if (before !== !!p.species) recount();
-  S.last = {species: p.species, stage: p.stage, sex: p.sex, confidence: p.confidence};
-  if (my === saveSeq){
-    const m = $('#savedMsg'); if (m){ m.classList.add('on'); setTimeout(() => m.classList.remove('on'), 700); }
-    if (redraw){ drawStrip(); } else { markTile(); }
-    if (redraw && document.activeElement !== $('#species')) drawSide();
-  }
-}
-
-async function recount(){
-  const st = await api('/api/state');
-  S.total = st.total; S.done = st.done; counts();
-  document.title = `entolog ${st.done}/${st.total}`;
+  S.total = res.total; S.done = res.done; counts();
+  document.title = `entolog ${res.done}/${res.total}`;
+  S.errors = res.errors || {};
+  S.last = Object.fromEntries(FIELDS().filter(f => !f.help || true)
+    .map(f => [f.name, val(p, f.name)]).filter(([, v]) => v !== ''));
+  if (my !== saveSeq) return;
+  const m = $('#savedMsg'); if (m){ m.classList.add('on'); setTimeout(() => m.classList.remove('on'), 700); }
+  if (redraw && !flag) drawStrip(); else markTile();
+  const focused = document.activeElement;
+  const inField = focused && focused.dataset && focused.dataset.field;
+  if ((redraw && !inField) || Object.keys(S.errors).length) drawSide();
 }
 
 function nextTodo(){
   for (let n = S.i + 1; n < S.photos.length; n++)
-    if (!S.photos[n].species){ select(n); return; }
+    if (!val(S.photos[n], PRIMARY())){ select(n); return; }
   select(Math.min(S.i + 1, S.photos.length - 1));
 }
 
 /* ---------- keyboard ---------- */
 document.addEventListener('keydown', e => {
-  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
-  if (e.key === 'Escape'){ document.activeElement.blur(); return; }
-  if (typing) return;
+  const el = document.activeElement;
+  const typing = /^(INPUT|TEXTAREA)$/.test(el.tagName);
+  if (e.key === 'Escape'){ el.blur(); return; }
+  if (typing || e.ctrlKey || e.altKey || e.metaKey) return;
   const k = e.key.toLowerCase(), p = cur();
   if (k === 'j' || e.key === 'ArrowDown'){ e.preventDefault(); select(S.i + 1); }
   else if (k === 'k' || e.key === 'ArrowUp'){ e.preventDefault(); select(S.i - 1); }
   else if (e.key === 'Enter'){ nextTodo(); }
-  else if (k === '/'){ e.preventDefault(); $('#species')?.focus(); $('#species')?.select(); }
+  else if (k === '/'){ e.preventDefault(); focusField(PRIMARY()); }
   else if (k === 'g'){ S.group = !S.group; if ($('#grp')) $('#grp').checked = S.group; }
-  else if (k === 'f' && p){ save({flagged: p.flagged ? 0 : 1}, false); }
+  else if (k === 'f' && p){ save({_flag: p.flagged ? '' : '1'}, false); }
   else if (k === 'd' && S.last){ save({...S.last}); }
-  else if (k === 's' && p){
-    const list = S.vocab.sex, n = (list.indexOf(p.sex || '') + 1) % list.length;
-    save({sex: list[n]});
-  }
   else if (k === 'e'){ $('#exportDlg').showModal(); }
-  else if (/^[1-9]$/.test(k) && p){
-    const st = S.vocab.stage[+k - 1];
-    if (st) save({stage: p.stage === st ? '' : st});
+  else if (p && /^[1-9]$/.test(k) && digitField()){
+    const f = digitField(), choice = f.choices[+k - 1];
+    if (choice !== undefined) save({[f.name]: val(p, f.name) === choice ? '' : choice});
+  }
+  else if (p && keyField(k)){
+    const f = keyField(k);
+    if (f.choices && f.choices.length){
+      const n = (f.choices.indexOf(val(p, f.name)) + 1) % f.choices.length;
+      save({[f.name]: f.choices[n]});
+    } else { e.preventDefault(); focusField(f.name); }
   }
 });
+
+function focusField(name){
+  const el = document.querySelector(`#side [data-field="${CSS.escape(name)}"]`);
+  if (el){ el.focus(); el.select?.(); }
+}
 
 /* ---------- header controls ---------- */
 $('#filters').onclick = e => { const c = e.target.closest('.chip'); if (c){ S.filter = c.dataset.f; S.i = 0; load(); } };
